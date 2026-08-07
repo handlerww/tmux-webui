@@ -1,0 +1,576 @@
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import './style.css';
+
+const elements = {
+  welcome: document.querySelector('#welcome'),
+  terminalView: document.querySelector('#terminal-view'),
+  terminal: document.querySelector('#terminal'),
+  terminalShell: document.querySelector('#terminal-shell'),
+  terminalHint: document.querySelector('#terminal-hint'),
+  readerView: document.querySelector('#reader-view'),
+  readerContent: document.querySelector('#reader-content'),
+  readerStatus: document.querySelector('#reader-status'),
+  readerComposer: document.querySelector('#reader-composer'),
+  readerInput: document.querySelector('#reader-input'),
+  readerMode: document.querySelector('#reader-mode-button'),
+  terminalMode: document.querySelector('#terminal-mode-button'),
+  readerKeys: document.querySelectorAll('[data-key]'),
+  terminalActions: document.querySelectorAll('.terminal-action'),
+  sessionList: document.querySelector('#session-list'),
+  sessionSearch: document.querySelector('#session-search-input'),
+  sessionSearchClear: document.querySelector('#session-search-clear'),
+  refresh: document.querySelector('#refresh-button'),
+  activeName: document.querySelector('#active-name'),
+  activePath: document.querySelector('#active-path'),
+  connectionDot: document.querySelector('#connection-dot'),
+  connectionText: document.querySelector('#connection-text'),
+  copy: document.querySelector('#copy-button'),
+  paste: document.querySelector('#paste-button'),
+  reconnect: document.querySelector('#reconnect-button'),
+  toast: document.querySelector('#toast'),
+};
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const fitAddon = new FitAddon();
+const terminal = new Terminal({
+  allowTransparency: false,
+  cursorBlink: true,
+  cursorStyle: 'bar',
+  cursorInactiveStyle: 'outline',
+  fontFamily: '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
+  fontSize: 14,
+  lineHeight: 1.32,
+  letterSpacing: 0,
+  scrollback: 20000,
+  scrollOnUserInput: true,
+  smoothScrollDuration: 120,
+  rightClickSelectsWord: true,
+  theme: {
+    background: '#fbfaf7',
+    foreground: '#252824',
+    cursor: '#de6b48',
+    cursorAccent: '#fbfaf7',
+    selectionBackground: '#b8d9d2aa',
+    selectionInactiveBackground: '#d8e6e2aa',
+    black: '#242824',
+    red: '#bd4b3f',
+    green: '#5d7e5a',
+    yellow: '#9b7525',
+    blue: '#496f91',
+    magenta: '#8a5d86',
+    cyan: '#3d7d7a',
+    white: '#e8e6df',
+    brightBlack: '#6f746e',
+    brightRed: '#d76755',
+    brightGreen: '#759a6e',
+    brightYellow: '#bd9140',
+    brightBlue: '#648aad',
+    brightMagenta: '#a675a1',
+    brightCyan: '#58a09b',
+    brightWhite: '#ffffff',
+  },
+});
+
+terminal.loadAddon(fitAddon);
+terminal.open(elements.terminal);
+
+let sessions = [];
+let selectedSession = null;
+let socket = null;
+let toastTimer = null;
+let resizeTimer = null;
+let readerResizeTimer = null;
+let refreshInFlight = false;
+let viewMode = 'reader';
+let readerLines = [];
+let captureInFlight = false;
+let captureTimer = null;
+
+terminal.onData((data) => {
+  sendInput(data);
+});
+
+terminal.onSelectionChange(() => {
+  elements.copy.disabled = !terminal.hasSelection();
+});
+
+terminal.attachCustomKeyEventHandler((event) => {
+  const commandKey = event.ctrlKey || event.metaKey;
+  if (commandKey && event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+    if (event.type === 'keydown') copySelection();
+    return false;
+  }
+  return true;
+});
+
+elements.refresh.addEventListener('click', () => loadSessions(true));
+elements.sessionSearch.addEventListener('input', () => {
+  elements.sessionSearchClear.hidden = elements.sessionSearch.value.length === 0;
+  renderSessions();
+});
+elements.sessionSearch.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && elements.sessionSearch.value) {
+    clearSessionSearch();
+  }
+});
+elements.sessionSearchClear.addEventListener('click', clearSessionSearch);
+elements.copy.addEventListener('click', copySelection);
+elements.paste.addEventListener('click', pasteClipboard);
+elements.reconnect.addEventListener('click', () => connect(selectedSession));
+elements.readerMode.addEventListener('click', () => setViewMode('reader'));
+elements.terminalMode.addEventListener('click', () => setViewMode('terminal'));
+elements.readerComposer.addEventListener('submit', (event) => {
+  event.preventDefault();
+  submitReaderInput();
+});
+elements.readerInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    submitReaderInput();
+  }
+});
+elements.readerInput.addEventListener('input', resizeReaderInput);
+for (const button of elements.readerKeys) {
+  button.addEventListener('click', () => sendReaderKey(button.dataset.key));
+}
+
+new ResizeObserver(() => scheduleFit()).observe(elements.terminalShell);
+new ResizeObserver(() => scheduleReaderSize()).observe(elements.readerView);
+window.addEventListener('resize', () => {
+  scheduleFit();
+  scheduleReaderSize();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    loadSessions(false);
+    refreshReader(true);
+  }
+});
+document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  const isTyping = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+  if (event.key === '/' && !isTyping && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    elements.sessionSearch.focus();
+  }
+});
+
+async function loadSessions(showFeedback = false) {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  elements.refresh.classList.add('spinning');
+  try {
+    const response = await fetch('/api/sessions', { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    sessions = body.sessions ?? [];
+    renderSessions();
+    if (selectedSession && !sessions.some((item) => item.name === selectedSession.name)) {
+      setConnection('ended', 'Ended');
+      socket?.close();
+    }
+    if (showFeedback) showToast('Updated');
+  } catch (error) {
+    renderSessionError();
+    if (showFeedback) showToast('Could not refresh');
+  } finally {
+    refreshInFlight = false;
+    elements.refresh.classList.remove('spinning');
+  }
+}
+
+function renderSessions() {
+  elements.sessionList.replaceChildren();
+  if (sessions.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-sessions';
+    empty.innerHTML = '<span class="empty-icon">◇</span><strong>No sessions</strong><small>Run tmux new -s work</small>';
+    elements.sessionList.append(empty);
+    return;
+  }
+
+  const query = elements.sessionSearch.value.trim().toLocaleLowerCase();
+  const visibleSessions = query
+    ? sessions.filter((session) => session.name.toLocaleLowerCase().includes(query) || (session.path || '').toLocaleLowerCase().includes(query))
+    : sessions;
+
+  if (visibleSessions.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-sessions search-empty';
+    const icon = document.createElement('span');
+    icon.className = 'empty-icon';
+    icon.textContent = '⌕';
+    const title = document.createElement('strong');
+    title.textContent = 'No matches';
+    const hint = document.createElement('small');
+    hint.textContent = 'Search by name or path';
+    empty.append(icon, title, hint);
+    elements.sessionList.append(empty);
+    return;
+  }
+
+  for (const session of visibleSessions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'session-card';
+    button.classList.toggle('active', selectedSession?.name === session.name);
+    button.addEventListener('click', () => selectSession(session));
+
+    const top = document.createElement('span');
+    top.className = 'session-card-top';
+    const name = document.createElement('strong');
+    name.textContent = session.name;
+    const activity = document.createElement('span');
+    activity.className = 'activity-time';
+    activity.textContent = relativeTime(session.lastActivity);
+    top.append(name, activity);
+
+    const meta = document.createElement('span');
+    meta.className = 'session-meta';
+    const dot = document.createElement('span');
+    dot.className = 'live-dot';
+    meta.append(dot, `${session.windows} ${plural(session.windows, 'window')}`);
+    if (session.attached > 0) meta.append(` · ${session.attached} ${plural(session.attached, 'client')}`);
+    const sessionPath = document.createElement('span');
+    sessionPath.className = 'session-path';
+    sessionPath.textContent = session.path || 'Path unavailable';
+    sessionPath.title = session.path || '';
+    button.append(top, sessionPath, meta);
+    elements.sessionList.append(button);
+  }
+}
+
+function clearSessionSearch() {
+  elements.sessionSearch.value = '';
+  elements.sessionSearchClear.hidden = true;
+  renderSessions();
+  elements.sessionSearch.focus();
+}
+
+function renderSessionError() {
+  elements.sessionList.replaceChildren();
+  const error = document.createElement('button');
+  error.type = 'button';
+  error.className = 'session-error';
+  error.textContent = 'Could not load. Retry';
+  error.addEventListener('click', () => loadSessions(false));
+  elements.sessionList.append(error);
+}
+
+function selectSession(session) {
+  const changed = selectedSession?.name !== session.name;
+  selectedSession = session;
+  elements.activeName.textContent = session.name;
+  elements.activePath.textContent = session.path || 'Path unavailable';
+  elements.activePath.title = session.path || '';
+  elements.welcome.hidden = true;
+  elements.terminalView.hidden = false;
+  renderSessions();
+  requestAnimationFrame(() => {
+    if (changed) {
+      terminal.reset();
+      terminal.clear();
+      readerLines = [];
+      elements.readerContent.replaceChildren();
+      elements.readerStatus.hidden = false;
+      elements.readerStatus.textContent = 'Loading output';
+    }
+    if (viewMode === 'terminal') {
+      fitAddon.fit();
+    } else {
+      fitReaderTerminal();
+    }
+    connect(session);
+    refreshReader(true);
+    focusActiveView();
+  });
+}
+
+function connect(session) {
+  if (!session) return;
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
+  setConnection('connecting', 'Connecting');
+  if (viewMode === 'terminal') {
+    fitAddon.fit();
+  } else {
+    fitReaderTerminal();
+  }
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const query = new URLSearchParams({
+    session: session.name,
+    cols: String(terminal.cols),
+    rows: String(terminal.rows),
+  });
+  const currentSocket = new WebSocket(`${protocol}//${location.host}/ws?${query}`);
+  currentSocket.binaryType = 'arraybuffer';
+  socket = currentSocket;
+
+  currentSocket.addEventListener('open', () => {
+    if (socket !== currentSocket) return;
+    setConnection('connected', 'Live');
+    sendResize();
+    focusActiveView();
+  });
+  currentSocket.addEventListener('message', (event) => {
+    if (socket !== currentSocket) return;
+    if (event.data instanceof ArrayBuffer) {
+      terminal.write(decoder.decode(new Uint8Array(event.data), { stream: true }));
+    }
+  });
+  currentSocket.addEventListener('close', () => {
+    if (socket !== currentSocket) return;
+    socket = null;
+    setConnection('disconnected', 'Disconnected');
+  });
+  currentSocket.addEventListener('error', () => {
+    if (socket === currentSocket) setConnection('disconnected', 'Connection failed');
+  });
+}
+
+function setViewMode(mode) {
+  if (mode !== 'reader' && mode !== 'terminal') return;
+  viewMode = mode;
+  const reader = mode === 'reader';
+  elements.readerView.hidden = !reader;
+  elements.readerComposer.hidden = !reader;
+  elements.terminalShell.hidden = reader;
+  elements.terminalHint.hidden = reader;
+  elements.readerMode.setAttribute('aria-pressed', String(reader));
+  elements.terminalMode.setAttribute('aria-pressed', String(!reader));
+  for (const action of elements.terminalActions) action.hidden = reader;
+
+  if (reader) {
+    fitReaderTerminal();
+    sendResize();
+    refreshReader(true);
+  } else {
+    clearTimeout(captureTimer);
+    requestAnimationFrame(() => {
+      fitAddon.fit();
+      sendResize();
+      terminal.focus();
+    });
+  }
+}
+
+function focusActiveView() {
+  if (viewMode === 'reader') {
+    elements.readerInput.focus();
+  } else {
+    terminal.focus();
+  }
+}
+
+async function refreshReader(forceFollow = false) {
+  if (viewMode !== 'reader' || !selectedSession || document.hidden || captureInFlight) return;
+  captureInFlight = true;
+  const sessionName = selectedSession.name;
+  clearTimeout(captureTimer);
+  try {
+    const query = new URLSearchParams({ session: sessionName });
+    const response = await fetch(`/api/capture?${query}`, {
+      cache: 'no-store',
+      headers: { Accept: 'text/plain' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const content = await response.text();
+    if (selectedSession?.name === sessionName) renderReader(content, forceFollow);
+  } catch {
+    if (selectedSession?.name === sessionName && readerLines.length === 0) {
+      elements.readerStatus.hidden = false;
+      elements.readerStatus.textContent = 'Output unavailable';
+    }
+  } finally {
+    captureInFlight = false;
+    if (viewMode === 'reader' && selectedSession) {
+      captureTimer = setTimeout(() => refreshReader(false), selectedSession.name === sessionName ? 850 : 0);
+    }
+  }
+}
+
+function renderReader(content, forceFollow) {
+  const nextLines = content.replaceAll('\r', '').split('\n');
+  while (nextLines.length > 0 && nextLines.at(-1) === '') nextLines.pop();
+
+  const follow = forceFollow || isNearReaderBottom();
+  let prefix = 0;
+  while (prefix < readerLines.length && prefix < nextLines.length && readerLines[prefix] === nextLines[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < readerLines.length - prefix
+    && suffix < nextLines.length - prefix
+    && readerLines[readerLines.length - 1 - suffix] === nextLines[nextLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+
+  const removeCount = readerLines.length - prefix - suffix;
+  for (let index = 0; index < removeCount; index += 1) {
+    elements.readerContent.children[prefix]?.remove();
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const line of nextLines.slice(prefix, nextLines.length - suffix)) {
+    const row = document.createElement('div');
+    row.className = 'reader-line';
+    row.textContent = line || '\u00a0';
+    fragment.append(row);
+  }
+  elements.readerContent.insertBefore(fragment, elements.readerContent.children[prefix] ?? null);
+  readerLines = nextLines;
+  elements.readerStatus.hidden = nextLines.length > 0;
+  if (nextLines.length === 0) elements.readerStatus.textContent = 'Waiting for output';
+
+  if (follow) {
+    requestAnimationFrame(() => {
+      elements.readerView.scrollTop = elements.readerView.scrollHeight;
+    });
+  }
+}
+
+function isNearReaderBottom() {
+  const remaining = elements.readerView.scrollHeight - elements.readerView.scrollTop - elements.readerView.clientHeight;
+  return remaining < 96;
+}
+
+function submitReaderInput() {
+  if (socket?.readyState !== WebSocket.OPEN) {
+    showToast('Not connected');
+    return;
+  }
+  terminal.paste(elements.readerInput.value);
+  sendInput('\r');
+  elements.readerInput.value = '';
+  resizeReaderInput();
+  elements.readerInput.focus();
+  setTimeout(() => refreshReader(true), 80);
+}
+
+function sendReaderKey(key) {
+  const values = { escape: '\u001b', interrupt: '\u0003', tab: '\t' };
+  if (!values[key]) return;
+  if (!sendInput(values[key])) {
+    showToast('Not connected');
+    return;
+  }
+  elements.readerInput.focus();
+  setTimeout(() => refreshReader(true), 80);
+}
+
+function sendInput(data) {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  socket.send(encoder.encode(data));
+  return true;
+}
+
+function resizeReaderInput() {
+  elements.readerInput.style.height = 'auto';
+  elements.readerInput.style.height = `${Math.min(elements.readerInput.scrollHeight, 150)}px`;
+}
+
+function scheduleReaderSize() {
+  if (elements.terminalView.hidden || viewMode !== 'reader') return;
+  clearTimeout(readerResizeTimer);
+  readerResizeTimer = setTimeout(() => {
+    fitReaderTerminal();
+    sendResize();
+  }, 100);
+}
+
+function fitReaderTerminal() {
+  const width = Math.min(elements.readerView.clientWidth || 900, 920);
+  const contentWidth = Math.max(320, width - Math.min(152, Math.max(48, width * 0.12)));
+  const columns = Math.max(40, Math.min(240, Math.floor(contentWidth / 8.2)));
+  const rows = Math.max(16, Math.min(100, Math.floor((elements.readerView.clientHeight || 576) / 18)));
+  if (terminal.cols !== columns || terminal.rows !== rows) terminal.resize(columns, rows);
+}
+
+function scheduleFit() {
+  if (elements.terminalView.hidden || viewMode !== 'terminal') return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    fitAddon.fit();
+    sendResize();
+  }, 80);
+}
+
+function sendResize() {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+}
+
+async function copySelection() {
+  const selection = terminal.getSelection();
+  if (!selection) return;
+  try {
+    await writeClipboard(selection);
+    showToast('Copied');
+  } catch {
+    showToast('Copy failed');
+  }
+}
+
+async function pasteClipboard() {
+  terminal.focus();
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) terminal.paste(text);
+    showToast(text ? 'Pasted' : 'Clipboard is empty');
+  } catch {
+    showToast('Press Ctrl / ⌘ + V');
+  }
+}
+
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.append(area);
+  area.select();
+  document.execCommand('copy');
+  area.remove();
+}
+
+function setConnection(state, label) {
+  elements.connectionDot.dataset.state = state;
+  elements.connectionText.textContent = label;
+}
+
+function relativeTime(value) {
+  const timestamp = new Date(value).getTime();
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  if (Math.abs(seconds) < 60) return formatter.format(seconds, 'second');
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) return formatter.format(minutes, 'minute');
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return formatter.format(hours, 'hour');
+  return formatter.format(Math.round(hours / 24), 'day');
+}
+
+function plural(count, word) {
+  return count === 1 ? word : `${word}s`;
+}
+
+function showToast(message) {
+  clearTimeout(toastTimer);
+  elements.toast.textContent = message;
+  elements.toast.classList.add('visible');
+  toastTimer = setTimeout(() => elements.toast.classList.remove('visible'), 2200);
+}
+
+loadSessions(false);
+setInterval(() => loadSessions(false), 5000);

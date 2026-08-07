@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f3f1eb" />
+    <title>tmux workspace</title>
+    <script type="module" crossorigin src="/assets/index-DG8FVgzX.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Rke9h_Rp.css">
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <div class="brand">tmux workspace</div>
+            <div class="brand-subtitle">Local sessions</div>
+          </div>
+        </div>
+
+        <label class="session-search" for="session-search-input">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input id="session-search-input" type="search" placeholder="Search sessions" autocomplete="off" spellcheck="false" aria-keyshortcuts="/" />
+          <button id="session-search-clear" type="button" title="Clear" aria-label="Clear search" hidden>×</button>
+        </label>
+
+        <div class="session-heading">
+          <span>Sessions</span>
+          <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh sessions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.7 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.3 15"/></svg>
+          </button>
+        </div>
+        <div id="session-list" class="session-list" aria-live="polite"></div>
+        <div class="sidebar-footer">
+          <span class="local-dot"></span>
+          Local only
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section id="welcome" class="welcome">
+          <div class="welcome-art" aria-hidden="true">
+            <div class="window window-back"><span></span><span></span></div>
+            <div class="window window-front"><span></span><span></span><span></span></div>
+          </div>
+          <p class="eyebrow">RUNNING SESSIONS</p>
+          <h1>Choose a session</h1>
+          <p class="welcome-copy">Pick up where you left off.</p>
+          <div class="gesture-grid">
+            <div><kbd>Drag</kbd><span>Select</span></div>
+            <div><kbd>⌘ / Ctrl C</kbd><span>Copy</span></div>
+            <div><kbd>⌘ / Ctrl V</kbd><span>Paste</span></div>
+            <div><kbd>Shift + drag</kbd><span>Force select</span></div>
+          </div>
+        </section>
+
+        <section id="terminal-view" class="terminal-view" hidden>
+          <header class="toolbar">
+            <div class="session-identity">
+              <div class="session-icon" aria-hidden="true">›_</div>
+              <div>
+                <h1 id="active-name">Session</h1>
+                <div id="active-path" class="active-path"></div>
+                <div class="connection-line"><span id="connection-dot" class="connection-dot"></span><span id="connection-text">Connecting</span></div>
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <div class="view-switch" role="group" aria-label="View">
+                <button id="reader-mode-button" type="button" aria-pressed="true">Reader</button>
+                <button id="terminal-mode-button" type="button" aria-pressed="false">Terminal</button>
+              </div>
+              <button id="copy-button" class="action-button terminal-action" type="button" disabled hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+                Copy
+              </button>
+              <button id="paste-button" class="action-button terminal-action" type="button" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h6M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2H9V4Z"/><path d="M16 5h2a2 2 0 0 1 2 2v13H4V7a2 2 0 0 1 2-2h2"/></svg>
+                Paste
+              </button>
+              <button id="reconnect-button" class="action-button quiet" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.7 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.3 15"/></svg>
+                Reconnect
+              </button>
+            </div>
+          </header>
+          <div id="reader-view" class="reader-view" tabindex="0" aria-label="Session output">
+            <div id="reader-content" class="reader-content"></div>
+            <div id="reader-status" class="reader-status">Loading output</div>
+          </div>
+          <div id="terminal-shell" class="terminal-shell" hidden>
+            <div id="terminal" aria-label="tmux session"></div>
+          </div>
+          <form id="reader-composer" class="reader-composer">
+            <div class="reader-shortcuts" aria-label="Keys">
+              <button type="button" data-key="escape">Esc</button>
+              <button type="button" data-key="interrupt">Ctrl C</button>
+              <button type="button" data-key="tab">Tab</button>
+            </div>
+            <div class="composer-row">
+              <textarea id="reader-input" class="reader-input" rows="1" placeholder="Type a message" aria-label="Session input" spellcheck="true"></textarea>
+              <button class="send-button" type="submit" aria-label="Send">↑</button>
+            </div>
+          </form>
+          <footer id="terminal-hint" class="hint-bar" hidden>
+            <span>Type to interact</span>
+            <span class="hint-separator"></span>
+            <span><kbd>Shift</kbd> + drag to select</span>
+          </footer>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
