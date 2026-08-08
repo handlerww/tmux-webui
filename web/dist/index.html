@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f3f1eb" />
     <title>tmux workspace</title>
-    <script type="module" crossorigin src="/assets/index-DG8FVgzX.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Rke9h_Rp.css">
+    <script type="module" crossorigin src="/assets/index-Digz3-jD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-fG6YbXgN.css">
   </head>
   <body>
     <div id="app">
@@ -60,8 +60,18 @@
           <header class="toolbar">
             <div class="session-identity">
               <div class="session-icon" aria-hidden="true">›_</div>
-              <div>
-                <h1 id="active-name">Session</h1>
+              <div class="session-details">
+                <div id="session-name-display" class="session-name-display">
+                  <h1 id="active-name">Session</h1>
+                  <button id="rename-button" class="rename-button" type="button" title="Rename session" aria-label="Rename session">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.5-10.5a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.2 3 3"/></svg>
+                  </button>
+                </div>
+                <form id="rename-form" class="rename-form" hidden>
+                  <input id="rename-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-label="New session name" />
+                  <button id="rename-save" type="submit">Save</button>
+                  <button id="rename-cancel" type="button">Cancel</button>
+                </form>
                 <div id="active-path" class="active-path"></div>
                 <div class="connection-line"><span id="connection-dot" class="connection-dot"></span><span id="connection-text">Connecting</span></div>
               </div>
@@ -71,6 +81,10 @@
                 <button id="reader-mode-button" type="button" aria-pressed="true">Reader</button>
                 <button id="terminal-mode-button" type="button" aria-pressed="false">Terminal</button>
               </div>
+              <button id="reader-follow-button" class="action-button reader-action reader-follow-button" type="button" aria-pressed="false" title="Automatically follow new output">
+                <span class="reader-follow-dot" aria-hidden="true"></span>
+                Auto-follow
+              </button>
               <button id="copy-button" class="action-button terminal-action" type="button" disabled hidden>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
                 Copy

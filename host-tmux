@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+case "${HOST_UID}:${HOST_GID}" in
+	*[!0-9:]*|:*|*:)
+		echo "host-tmux: HOST_UID and HOST_GID must be numeric" >&2
+		exit 2
+		;;
+esac
+
+case "${HOST_TMUX_BIN}" in
+	/*)
+		;;
+	*)
+		echo "host-tmux: HOST_TMUX_BIN must be an absolute host path" >&2
+		exit 2
+		;;
+esac
+
+# The container is intentionally run with the host PID namespace and elevated
+# privileges. Entering PID 1's mount namespace makes the host tmux binary,
+# libraries, configuration, and socket visible without bind mounting them.
+exec nsenter \
+	--mount=/proc/1/ns/mnt \
+	--setuid="${HOST_UID}" \
+	--setgid="${HOST_GID}" \
+	-- "${HOST_TMUX_BIN}" "$@"

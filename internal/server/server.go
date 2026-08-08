@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"tmux-webui/internal/terminal"
 	"tmux-webui/internal/tmux"
@@ -34,6 +36,11 @@ type resizeMessage struct {
 	Rows int    `json:"rows"`
 }
 
+type renameSessionRequest struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func New(tmuxBinary string, logger *slog.Logger) http.Handler {
 	static, err := fs.Sub(webassets.Files, "dist")
 	if err != nil {
@@ -47,6 +54,7 @@ func New(tmuxBinary string, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", server.health)
 	mux.HandleFunc("GET /api/sessions", server.sessions)
+	mux.HandleFunc("PATCH /api/sessions/rename", server.renameSession)
 	mux.HandleFunc("GET /api/capture", server.capture)
 	mux.HandleFunc("GET /ws", server.connect)
 	mux.HandleFunc("/", server.frontend)
@@ -101,6 +109,108 @@ func (s *Server) sessions(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) renameSession(writer http.ResponseWriter, request *http.Request) {
+	if !sameOrigin(request) {
+		writeError(writer, http.StatusForbidden, "Request origin is not allowed")
+		return
+	}
+
+	request.Body = http.MaxBytesReader(writer, request.Body, 4<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input renameSessionRequest
+	if err := decoder.Decode(&input); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid rename request")
+		return
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid rename request")
+		return
+	}
+	if input.ID == "" {
+		writeError(writer, http.StatusBadRequest, "A tmux session is required")
+		return
+	}
+	if message := validateSessionName(input.Name); message != "" {
+		writeError(writer, http.StatusBadRequest, message)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
+	defer cancel()
+	sessions, err := s.tmux.List(ctx)
+	if err != nil {
+		s.logger.Error("failed to list tmux sessions before rename", "error", err)
+		writeError(writer, http.StatusServiceUnavailable, "Unable to read tmux sessions")
+		return
+	}
+
+	var current *tmux.Session
+	for index := range sessions {
+		session := &sessions[index]
+		if session.ID == input.ID {
+			current = session
+		}
+		if session.Name == input.Name && session.ID != input.ID {
+			writeError(writer, http.StatusConflict, "A tmux session with that name already exists")
+			return
+		}
+	}
+	if current == nil {
+		writeError(writer, http.StatusNotFound, "The tmux session no longer exists")
+		return
+	}
+	if current.Name == input.Name {
+		writeJSON(writer, http.StatusOK, map[string]string{"id": input.ID, "name": input.Name})
+		return
+	}
+
+	if err := s.tmux.Rename(ctx, input.ID, input.Name); err != nil {
+		switch {
+		case errors.Is(err, tmux.ErrSessionExists):
+			writeError(writer, http.StatusConflict, "A tmux session with that name already exists")
+		case errors.Is(err, tmux.ErrSessionNotFound):
+			writeError(writer, http.StatusNotFound, "The tmux session no longer exists")
+		default:
+			s.logger.Error("failed to rename tmux session", "session_id", input.ID, "error", err)
+			writeError(writer, http.StatusServiceUnavailable, "Unable to rename the tmux session")
+		}
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]string{"id": input.ID, "name": input.Name})
+}
+
+func validateSessionName(name string) string {
+	if name == "" {
+		return "A session name is required"
+	}
+	if !utf8.ValidString(name) || len([]rune(name)) > 100 {
+		return "Session names must be at most 100 characters"
+	}
+	if strings.TrimSpace(name) != name {
+		return "Session names cannot start or end with whitespace"
+	}
+	for _, character := range name {
+		if unicode.IsControl(character) {
+			return "Session names cannot contain control characters"
+		}
+	}
+	return ""
+}
+
+func ensureJSONEnd(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("unexpected data after JSON object")
+	}
+	return err
 }
 
 func (s *Server) connect(writer http.ResponseWriter, request *http.Request) {

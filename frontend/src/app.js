@@ -16,13 +16,21 @@ const elements = {
   readerInput: document.querySelector('#reader-input'),
   readerMode: document.querySelector('#reader-mode-button'),
   terminalMode: document.querySelector('#terminal-mode-button'),
+  readerFollow: document.querySelector('#reader-follow-button'),
   readerKeys: document.querySelectorAll('[data-key]'),
+  readerActions: document.querySelectorAll('.reader-action'),
   terminalActions: document.querySelectorAll('.terminal-action'),
   sessionList: document.querySelector('#session-list'),
   sessionSearch: document.querySelector('#session-search-input'),
   sessionSearchClear: document.querySelector('#session-search-clear'),
   refresh: document.querySelector('#refresh-button'),
   activeName: document.querySelector('#active-name'),
+  sessionNameDisplay: document.querySelector('#session-name-display'),
+  renameButton: document.querySelector('#rename-button'),
+  renameForm: document.querySelector('#rename-form'),
+  renameInput: document.querySelector('#rename-input'),
+  renameSave: document.querySelector('#rename-save'),
+  renameCancel: document.querySelector('#rename-cancel'),
   activePath: document.querySelector('#active-path'),
   connectionDot: document.querySelector('#connection-dot'),
   connectionText: document.querySelector('#connection-text'),
@@ -34,6 +42,7 @@ const elements = {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const sessionNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const fitAddon = new FitAddon();
 const terminal = new Terminal({
   allowTransparency: false,
@@ -88,6 +97,10 @@ let viewMode = 'reader';
 let readerLines = [];
 let captureInFlight = false;
 let captureTimer = null;
+let readerJumpPending = false;
+let renameInFlight = false;
+let readerAutoFollow = readReaderAutoFollow();
+elements.readerFollow.setAttribute('aria-pressed', String(readerAutoFollow));
 
 terminal.onData((data) => {
   sendInput(data);
@@ -120,8 +133,21 @@ elements.sessionSearchClear.addEventListener('click', clearSessionSearch);
 elements.copy.addEventListener('click', copySelection);
 elements.paste.addEventListener('click', pasteClipboard);
 elements.reconnect.addEventListener('click', () => connect(selectedSession));
+elements.renameButton.addEventListener('click', startRename);
+elements.renameCancel.addEventListener('click', () => cancelRename(true));
+elements.renameForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  renameSelectedSession();
+});
+elements.renameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !renameInFlight) {
+    event.preventDefault();
+    cancelRename(true);
+  }
+});
 elements.readerMode.addEventListener('click', () => setViewMode('reader'));
 elements.terminalMode.addEventListener('click', () => setViewMode('terminal'));
+elements.readerFollow.addEventListener('click', toggleReaderAutoFollow);
 elements.readerComposer.addEventListener('submit', (event) => {
   event.preventDefault();
   submitReaderInput();
@@ -146,7 +172,7 @@ window.addEventListener('resize', () => {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     loadSessions(false);
-    refreshReader(true);
+    refreshReader(false);
   }
 });
 document.addEventListener('keydown', (event) => {
@@ -167,11 +193,17 @@ async function loadSessions(showFeedback = false) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json();
     sessions = body.sessions ?? [];
-    renderSessions();
-    if (selectedSession && !sessions.some((item) => item.name === selectedSession.name)) {
-      setConnection('ended', 'Ended');
-      socket?.close();
+    if (selectedSession) {
+      const refreshed = sessions.find((item) => item.id === selectedSession.id);
+      if (refreshed) {
+        selectedSession = refreshed;
+        updateActiveIdentity();
+      } else if (!renameInFlight) {
+        setConnection('ended', 'Ended');
+        socket?.close();
+      }
     }
+    renderSessions();
     if (showFeedback) showToast('Updated');
   } catch (error) {
     renderSessionError();
@@ -193,9 +225,14 @@ function renderSessions() {
   }
 
   const query = elements.sessionSearch.value.trim().toLocaleLowerCase();
-  const visibleSessions = query
+  const visibleSessions = (query
     ? sessions.filter((session) => session.name.toLocaleLowerCase().includes(query) || (session.path || '').toLocaleLowerCase().includes(query))
-    : sessions;
+    : sessions
+  ).slice().sort((left, right) => (
+    sessionNameCollator.compare(left.name, right.name)
+    || left.name.localeCompare(right.name)
+    || left.id.localeCompare(right.id)
+  ));
 
   if (visibleSessions.length === 0) {
     const empty = document.createElement('div');
@@ -216,7 +253,8 @@ function renderSessions() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'session-card';
-    button.classList.toggle('active', selectedSession?.name === session.name);
+    button.disabled = renameInFlight;
+    button.classList.toggle('active', selectedSession?.id === session.id);
     button.addEventListener('click', () => selectSession(session));
 
     const top = document.createElement('span');
@@ -261,11 +299,10 @@ function renderSessionError() {
 }
 
 function selectSession(session) {
-  const changed = selectedSession?.name !== session.name;
+  const changed = selectedSession?.id !== session.id;
+  cancelRename(false);
   selectedSession = session;
-  elements.activeName.textContent = session.name;
-  elements.activePath.textContent = session.path || 'Path unavailable';
-  elements.activePath.title = session.path || '';
+  updateActiveIdentity();
   elements.welcome.hidden = true;
   elements.terminalView.hidden = false;
   renderSessions();
@@ -287,6 +324,87 @@ function selectSession(session) {
     refreshReader(true);
     focusActiveView();
   });
+}
+
+function updateActiveIdentity() {
+  if (!selectedSession) return;
+  elements.activeName.textContent = selectedSession.name;
+  elements.activeName.title = selectedSession.name;
+  elements.activePath.textContent = selectedSession.path || 'Path unavailable';
+  elements.activePath.title = selectedSession.path || '';
+}
+
+function startRename() {
+  if (!selectedSession || renameInFlight) return;
+  elements.renameInput.value = selectedSession.name;
+  elements.sessionNameDisplay.hidden = true;
+  elements.renameForm.hidden = false;
+  elements.terminalView.classList.add('renaming');
+  requestAnimationFrame(() => {
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  });
+}
+
+function cancelRename(restoreFocus) {
+  if (renameInFlight) return;
+  elements.renameForm.hidden = true;
+  elements.sessionNameDisplay.hidden = false;
+  elements.terminalView.classList.remove('renaming');
+  if (restoreFocus) elements.renameButton.focus();
+}
+
+async function renameSelectedSession() {
+  if (!selectedSession || renameInFlight) return;
+  const sessionID = selectedSession.id;
+  const previousName = selectedSession.name;
+  const name = elements.renameInput.value.trim();
+  if (!name) {
+    showToast('Enter a session name');
+    elements.renameInput.focus();
+    return;
+  }
+  if (name === previousName) {
+    cancelRename(true);
+    return;
+  }
+
+  renameInFlight = true;
+  elements.renameInput.disabled = true;
+  elements.renameSave.disabled = true;
+  elements.renameCancel.disabled = true;
+  renderSessions();
+  try {
+    const response = await fetch('/api/sessions/rename', {
+      method: 'PATCH',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sessionID, name }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'Could not rename session');
+
+    sessions = sessions.map((session) => (session.id === sessionID ? { ...session, name: body.name || name } : session));
+    if (selectedSession?.id === sessionID) {
+      selectedSession = { ...selectedSession, name: body.name || name };
+      updateActiveIdentity();
+    }
+    elements.renameForm.hidden = true;
+    elements.sessionNameDisplay.hidden = false;
+    elements.terminalView.classList.remove('renaming');
+    renderSessions();
+    showToast(`Renamed to ${body.name || name}`);
+    loadSessions(false);
+  } catch (error) {
+    showToast(error.message || 'Could not rename session');
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  } finally {
+    renameInFlight = false;
+    elements.renameInput.disabled = false;
+    elements.renameSave.disabled = false;
+    elements.renameCancel.disabled = false;
+    renderSessions();
+  }
 }
 
 function connect(session) {
@@ -343,6 +461,7 @@ function setViewMode(mode) {
   elements.terminalHint.hidden = reader;
   elements.readerMode.setAttribute('aria-pressed', String(reader));
   elements.terminalMode.setAttribute('aria-pressed', String(!reader));
+  for (const action of elements.readerActions) action.hidden = !reader;
   for (const action of elements.terminalActions) action.hidden = reader;
 
   if (reader) {
@@ -367,7 +486,8 @@ function focusActiveView() {
   }
 }
 
-async function refreshReader(forceFollow = false) {
+async function refreshReader(jumpToBottom = false) {
+  if (jumpToBottom) readerJumpPending = true;
   if (viewMode !== 'reader' || !selectedSession || document.hidden || captureInFlight) return;
   captureInFlight = true;
   const sessionName = selectedSession.name;
@@ -380,7 +500,11 @@ async function refreshReader(forceFollow = false) {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const content = await response.text();
-    if (selectedSession?.name === sessionName) renderReader(content, forceFollow);
+    if (selectedSession?.name === sessionName) {
+      const shouldJumpToBottom = readerJumpPending;
+      readerJumpPending = false;
+      renderReader(content, shouldJumpToBottom);
+    }
   } catch {
     if (selectedSession?.name === sessionName && readerLines.length === 0) {
       elements.readerStatus.hidden = false;
@@ -394,11 +518,10 @@ async function refreshReader(forceFollow = false) {
   }
 }
 
-function renderReader(content, forceFollow) {
+function renderReader(content, jumpToBottom) {
   const nextLines = content.replaceAll('\r', '').split('\n');
   while (nextLines.length > 0 && nextLines.at(-1) === '') nextLines.pop();
 
-  const follow = forceFollow || isNearReaderBottom();
   let prefix = 0;
   while (prefix < readerLines.length && prefix < nextLines.length && readerLines[prefix] === nextLines[prefix]) {
     prefix += 1;
@@ -429,16 +552,32 @@ function renderReader(content, forceFollow) {
   elements.readerStatus.hidden = nextLines.length > 0;
   if (nextLines.length === 0) elements.readerStatus.textContent = 'Waiting for output';
 
-  if (follow) {
-    requestAnimationFrame(() => {
-      elements.readerView.scrollTop = elements.readerView.scrollHeight;
-    });
+  if (jumpToBottom || readerAutoFollow) scrollReaderToBottom();
+}
+
+function scrollReaderToBottom() {
+  requestAnimationFrame(() => {
+    elements.readerView.scrollTo({ top: elements.readerView.scrollHeight, behavior: 'instant' });
+  });
+}
+
+function readReaderAutoFollow() {
+  try {
+    return localStorage.getItem('tmux-webui.readerAutoFollow') === 'true';
+  } catch {
+    return false;
   }
 }
 
-function isNearReaderBottom() {
-  const remaining = elements.readerView.scrollHeight - elements.readerView.scrollTop - elements.readerView.clientHeight;
-  return remaining < 96;
+function toggleReaderAutoFollow() {
+  readerAutoFollow = !readerAutoFollow;
+  elements.readerFollow.setAttribute('aria-pressed', String(readerAutoFollow));
+  try {
+    localStorage.setItem('tmux-webui.readerAutoFollow', String(readerAutoFollow));
+  } catch {
+    // The setting still applies for this page when browser storage is unavailable.
+  }
+  if (readerAutoFollow) scrollReaderToBottom();
 }
 
 function submitReaderInput() {
@@ -451,7 +590,7 @@ function submitReaderInput() {
   elements.readerInput.value = '';
   resizeReaderInput();
   elements.readerInput.focus();
-  setTimeout(() => refreshReader(true), 80);
+  setTimeout(() => refreshReader(false), 80);
 }
 
 function sendReaderKey(key) {
@@ -462,7 +601,7 @@ function sendReaderKey(key) {
     return;
   }
   elements.readerInput.focus();
-  setTimeout(() => refreshReader(true), 80);
+  setTimeout(() => refreshReader(false), 80);
 }
 
 function sendInput(data) {

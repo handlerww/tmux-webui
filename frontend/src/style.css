@@ -103,7 +103,8 @@ button:focus-visible { outline: 3px solid #77a9a0; outline-offset: 2px; }
   cursor: pointer;
   transition: border-color .16s, background .16s, box-shadow .16s, transform .16s;
 }
-.session-card:hover { border-color: #d5d1c7; background: #f4f2ec; transform: translateY(-1px); }
+.session-card:hover:not(:disabled) { border-color: #d5d1c7; background: #f4f2ec; transform: translateY(-1px); }
+.session-card:disabled { cursor: wait; }
 .session-card.active { border-color: #c9d8d3; background: #faf9f5; box-shadow: 0 7px 20px #3c47421a; }
 .session-card-top { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 10px; }
 .session-card strong { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
@@ -150,8 +151,18 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
 .terminal-view { display: grid; height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
 .toolbar { display: flex; min-height: 79px; align-items: center; justify-content: space-between; gap: 24px; padding: 15px 22px; border-bottom: 1px solid #dfdcd4; background: #f7f5f0; }
 .session-identity { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.session-details { min-width: 0; }
 .session-icon { display: grid; width: 39px; height: 39px; flex: none; place-items: center; border-radius: 11px; color: #f4c386; background: #294d46; font-family: monospace; font-size: 13px; font-weight: 700; }
-.session-identity h1 { overflow: hidden; max-width: min(40vw, 420px); margin: 0 0 4px; color: #292c27; font-size: 15px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.session-name-display { display: flex; min-width: 0; align-items: center; gap: 4px; margin-bottom: 4px; }
+.session-identity h1 { overflow: hidden; max-width: min(40vw, 420px); margin: 0; color: #292c27; font-size: 15px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.rename-button { display: grid; width: 24px; height: 24px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 6px; color: #8b8e86; background: transparent; cursor: pointer; }
+.rename-button:hover { color: #294d46; background: #e8e6df; }
+.rename-button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.rename-form { display: flex; min-width: 290px; align-items: center; gap: 5px; margin-bottom: 4px; }
+.rename-form input { width: min(30vw, 280px); height: 28px; padding: 4px 8px; border: 1px solid #83a9a1; border-radius: 7px; outline: 0; color: #292c27; background: #fffefa; font: inherit; font-size: 13px; box-shadow: 0 0 0 3px #77a9a018; }
+.rename-form button { height: 27px; padding: 3px 7px; border: 1px solid #d5d2ca; border-radius: 6px; color: #60645c; background: #fffefa; font-size: 9px; font-weight: 650; cursor: pointer; }
+.rename-form button[type="submit"] { border-color: #315a52; color: #fffefa; background: #315a52; }
+.rename-form button:disabled { opacity: .5; cursor: default; }
 .active-path { display: -webkit-box; overflow: hidden; max-width: min(48vw, 620px); margin-bottom: 4px; color: #747870; font-family: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .connection-line { display: flex; align-items: center; color: #858880; font-size: 10px; }
 .connection-dot { width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #c5a460; }
@@ -166,6 +177,9 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
 .action-button:disabled { opacity: .42; cursor: default; }
 .action-button.quiet { background: transparent; }
 .action-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.reader-follow-button[aria-pressed="true"] { border-color: #afc9c1; color: #294d46; background: #f1f7f4; }
+.reader-follow-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #aaa9a2; box-shadow: 0 0 0 3px #aaa9a214; }
+.reader-follow-button[aria-pressed="true"] .reader-follow-dot { background: #6a9b72; box-shadow: 0 0 0 3px #6a9b7217; }
 
 .reader-view { position: relative; min-height: 0; overflow: auto; background: #fbfaf7; outline: 0; scrollbar-color: #c8c6bd transparent; scrollbar-width: thin; scroll-behavior: smooth; }
 .reader-view::-webkit-scrollbar { width: 10px; }
@@ -208,6 +222,10 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
   .activity-time { display: none; }
   .toolbar { min-height: 67px; padding: 11px 13px; }
   .session-icon { display: none; }
+  .rename-form { min-width: 0; }
+  .rename-form input { width: min(25vw, 180px); }
+  .terminal-view.renaming .toolbar-actions { display: none; }
+  .terminal-view.renaming .rename-form input { width: min(45vw, 240px); }
   .toolbar-actions { gap: 5px; }
   .view-switch button { padding-inline: 7px; }
   .action-button { padding: 7px; }
@@ -237,6 +255,8 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
   .gesture-grid { display: none; }
   .toolbar { align-items: flex-start; gap: 8px; }
   .session-identity h1 { max-width: 34vw; }
+  .rename-form input { width: 28vw; }
+  .rename-form button { padding-inline: 5px; }
   .active-path { max-width: 38vw; }
   .action-button.quiet { display: none; }
 }

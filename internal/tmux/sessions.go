@@ -11,7 +11,14 @@ import (
 	"time"
 )
 
-const fieldSeparator = "\x1f"
+// Keep the separator printable: host-management containers may invoke tmux
+// through nsenter, which sanitizes control characters in command arguments.
+const fieldSeparator = "<<<tmux-webui-field>>>"
+
+var (
+	ErrSessionExists   = errors.New("tmux session already exists")
+	ErrSessionNotFound = errors.New("tmux session not found")
+)
 
 type Session struct {
 	ID           string    `json:"id"`
@@ -84,8 +91,35 @@ func (c Client) Capture(ctx context.Context, name string) ([]byte, error) {
 	return output, nil
 }
 
+// Rename changes a session name without invoking a shell. Callers should use
+// the stable tmux session ID as target so names containing target separators do
+// not become ambiguous.
+func (c Client) Rename(ctx context.Context, target, name string) error {
+	cmd := exec.CommandContext(ctx, c.Binary, renameArguments(target, name)...)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	message := strings.ToLower(string(output))
+	switch {
+	case strings.Contains(message, "duplicate session"):
+		return fmt.Errorf("%w: %s", ErrSessionExists, strings.TrimSpace(string(output)))
+	case strings.Contains(message, "can't find session"),
+		strings.Contains(message, "no server running"),
+		strings.Contains(message, "no sessions"):
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, strings.TrimSpace(string(output)))
+	default:
+		return fmt.Errorf("rename tmux session: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+}
+
 func captureArguments(name string) []string {
 	return []string{"capture-pane", "-p", "-J", "-S", "-", "-t", name}
+}
+
+func renameArguments(target, name string) []string {
+	return []string{"rename-session", "-t", target, name}
 }
 
 func parseSessions(output string) ([]Session, error) {
