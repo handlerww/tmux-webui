@@ -38,6 +38,9 @@ func TestParseSessionsRejectsMalformedLine(t *testing.T) {
 
 func TestCaptureArgumentsKeepSessionAsOneArgument(t *testing.T) {
 	args := captureArguments("work; kill-server")
+	if args[2] != "-e" {
+		t.Fatalf("capture arguments do not preserve ANSI attributes: %#v", args)
+	}
 	if args[len(args)-1] != "work; kill-server" {
 		t.Fatalf("session name was not preserved as one argument: %#v", args)
 	}

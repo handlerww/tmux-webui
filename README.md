@@ -10,7 +10,7 @@ Reader is the default view. tmux interprets the terminal state, and the browser 
 
 - Automatically lists local tmux sessions with their window count, attached clients, path, and recent activity.
 - Renames the active tmux session directly from the workspace toolbar.
-- Shows the complete pane history in Reader with native browser scrolling, selection, and copy.
+- Shows the complete pane history in Reader with ANSI text and background colors, native browser scrolling, selection, and copy.
 - Opens Reader at the latest output without following later updates unless the persistent Auto-follow option is enabled.
 - Provides a separate Reader input box with Esc, Ctrl C, and Tab controls.
 - Switches to Terminal at any time for direct keyboard and terminal mouse input.
@@ -143,6 +143,7 @@ Run the checks:
 
 ```bash
 go test ./...
+npm --prefix frontend test
 npm --prefix frontend run build
 ```
 

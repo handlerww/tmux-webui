@@ -115,7 +115,7 @@ func (c Client) Rename(ctx context.Context, target, name string) error {
 }
 
 func captureArguments(name string) []string {
-	return []string{"capture-pane", "-p", "-J", "-S", "-", "-t", name}
+	return []string{"capture-pane", "-p", "-e", "-J", "-S", "-", "-t", name}
 }
 
 func renameArguments(target, name string) []string {

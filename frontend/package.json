@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node --test src/*.test.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -14,4 +15,3 @@
     "vite": "8.1.5"
   }
 }
-

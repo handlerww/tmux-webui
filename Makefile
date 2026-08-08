@@ -16,6 +16,7 @@ frontend:
 
 test:
 	go test ./...
+	npm --prefix frontend test
 	npm --prefix frontend run build
 
 clean:

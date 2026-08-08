@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { parseAnsiLines } from './ansi.js';
 import './style.css';
 
 const elements = {
@@ -519,18 +520,17 @@ async function refreshReader(jumpToBottom = false) {
 }
 
 function renderReader(content, jumpToBottom) {
-  const nextLines = content.replaceAll('\r', '').split('\n');
-  while (nextLines.length > 0 && nextLines.at(-1) === '') nextLines.pop();
+  const nextLines = parseAnsiLines(content);
 
   let prefix = 0;
-  while (prefix < readerLines.length && prefix < nextLines.length && readerLines[prefix] === nextLines[prefix]) {
+  while (prefix < readerLines.length && prefix < nextLines.length && readerLines[prefix] === nextLines[prefix].key) {
     prefix += 1;
   }
   let suffix = 0;
   while (
     suffix < readerLines.length - prefix
     && suffix < nextLines.length - prefix
-    && readerLines[readerLines.length - 1 - suffix] === nextLines[nextLines.length - 1 - suffix]
+    && readerLines[readerLines.length - 1 - suffix] === nextLines[nextLines.length - 1 - suffix].key
   ) {
     suffix += 1;
   }
@@ -544,15 +544,32 @@ function renderReader(content, jumpToBottom) {
   for (const line of nextLines.slice(prefix, nextLines.length - suffix)) {
     const row = document.createElement('div');
     row.className = 'reader-line';
-    row.textContent = line || '\u00a0';
+    renderAnsiLine(row, line.segments);
     fragment.append(row);
   }
   elements.readerContent.insertBefore(fragment, elements.readerContent.children[prefix] ?? null);
-  readerLines = nextLines;
+  readerLines = nextLines.map((line) => line.key);
   elements.readerStatus.hidden = nextLines.length > 0;
   if (nextLines.length === 0) elements.readerStatus.textContent = 'Waiting for output';
 
   if (jumpToBottom || readerAutoFollow) scrollReaderToBottom();
+}
+
+function renderAnsiLine(row, segments) {
+  if (segments.length === 0) {
+    row.textContent = '\u00a0';
+    return;
+  }
+  for (const segment of segments) {
+    if (Object.keys(segment.style).length === 0) {
+      row.append(document.createTextNode(segment.text));
+      continue;
+    }
+    const span = document.createElement('span');
+    span.textContent = segment.text;
+    Object.assign(span.style, segment.style);
+    row.append(span);
+  }
 }
 
 function scrollReaderToBottom() {
@@ -625,9 +642,12 @@ function scheduleReaderSize() {
 }
 
 function fitReaderTerminal() {
-  const width = Math.min(elements.readerView.clientWidth || 900, 920);
-  const contentWidth = Math.max(320, width - Math.min(152, Math.max(48, width * 0.12)));
-  const columns = Math.max(40, Math.min(240, Math.floor(contentWidth / 8.2)));
+  const width = elements.readerView.clientWidth || 900;
+  const contentStyle = getComputedStyle(elements.readerContent);
+  const horizontalPadding = (Number.parseFloat(contentStyle.paddingLeft) || 0)
+    + (Number.parseFloat(contentStyle.paddingRight) || 0);
+  const contentWidth = Math.max(320, width - horizontalPadding);
+  const columns = Math.max(40, Math.min(500, Math.floor(contentWidth / 8.2)));
   const rows = Math.max(16, Math.min(100, Math.floor((elements.readerView.clientHeight || 576) / 18)));
   if (terminal.cols !== columns || terminal.rows !== rows) terminal.resize(columns, rows);
 }

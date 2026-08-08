@@ -30,7 +30,8 @@ Reader mode keeps tmux and the attached application unchanged while adding a doc
 - Preserve existing tmux-owned sessions and processes.
 - Render the active pane history as selectable DOM text.
 - Support native browser scrolling, selection, copy, and paste into an input box.
-- Follow new output only when the reader is already near the bottom.
+- Preserve common ANSI text and background styles without interpreting output as HTML.
+- Follow new output only when the user enables Auto-follow.
 - Send text, Enter, Escape, Ctrl-C, and Tab to the selected session.
 - Keep a complete xterm-based Terminal mode for complex interactive programs.
 - Keep all application-facing behavior program-agnostic.
@@ -41,7 +42,7 @@ Reader mode keeps tmux and the attached application unchanged while adding a doc
 - Managing Codex threads, turns, models, or app-server state.
 - Parsing terminal output into semantic chat messages.
 - Replacing tmux as the process supervisor.
-- Reproducing ANSI colors and cursor placement in Reader mode.
+- Reproducing cursor placement or full terminal-emulator behavior in Reader mode.
 - Supporting multiple panes at once in Reader mode.
 - Providing authentication or safe direct public-network exposure.
 - Guaranteeing that every full-screen TUI is convenient to control from the Reader input box.
@@ -51,7 +52,7 @@ Reader mode keeps tmux and the attached application unchanged while adding a doc
 - **Reader**: A document-like DOM rendering of captured tmux pane content.
 - **Terminal**: The xterm.js view connected to a real PTY and tmux client.
 - **Composer**: The Reader mode text input and send button.
-- **Capture**: Plain text returned by `tmux capture-pane` for the selected session's active pane.
+- **Capture**: Text plus SGR attribute sequences returned by `tmux capture-pane` for the selected session's active pane.
 - **Session**: A tmux session returned by `tmux list-sessions`.
 
 ## System Architecture
@@ -79,7 +80,7 @@ flowchart LR
 
 The browser opens one WebSocket-backed tmux client for interaction. xterm.js continues to consume output in both views, even when its visual surface is hidden. This keeps terminal modes such as bracketed paste synchronized for Reader input.
 
-Reader content uses a separate polling path. The Go server asks tmux to render its current pane state, and the browser converts the returned text to normal DOM lines.
+Reader content uses a separate polling path. The Go server asks tmux to render its current pane state, and the browser converts the returned text and SGR attributes to normal DOM lines and styled spans.
 
 ## Detailed Design
 
@@ -95,11 +96,11 @@ The UI supports search by session name or path. Paths wrap naturally and are lim
 
 1. Require a session name.
 2. Confirm an exact match against the current tmux session list.
-3. Run `tmux capture-pane -p -J -S - -t <name>` without a shell.
-4. Return plain UTF-8 text with `Cache-Control: no-store`.
+3. Run `tmux capture-pane -p -e -J -S - -t <name>` without a shell.
+4. Return UTF-8 text with SGR attribute sequences and `Cache-Control: no-store`.
 5. Reject a response larger than 8 MiB.
 
-`-S -` includes available history and the visible pane. `-J` joins rows created only by terminal soft wrapping, allowing the browser to wrap the resulting logical line to its own width.
+`-S -` includes available history and the visible pane. `-e` preserves text and background attributes as escape sequences. `-J` joins rows created only by terminal soft wrapping, allowing the browser to wrap the resulting logical line to its own width.
 
 The active pane of the selected session is the capture target. tmux, rather than the browser, remains responsible for applying terminal control sequences and producing the rendered text state.
 
@@ -107,11 +108,11 @@ The active pane of the selected session is the capture target. tmux, rather than
 
 Reader mode polls the capture API approximately every 850 ms. Requests are serialized, so a slow capture cannot create an unbounded queue.
 
-The response is normalized to line feed separators, and empty rows at the end are removed. Each logical line becomes a text-only `div` with `white-space: pre-wrap`. Values are assigned with `textContent`; captured output is never interpreted as HTML.
+The response is normalized to line feed separators, and empty rows at the end are removed. A limited SGR parser supports the 16-color palette, 256-color palette, RGB foreground and background colors, and common emphasis attributes. Each logical line becomes a `div` with `white-space: pre-wrap`; style runs become spans. Values are always assigned with `textContent`, so captured output is never interpreted as HTML.
 
 On every refresh, the browser finds the common prefix and suffix between the old and new line arrays. Only the changed middle range is replaced. This preserves stable DOM nodes for most append-only output and makes browser selection less likely to reset.
 
-Reader auto-follow is conditional. If the viewport is within 96 pixels of the bottom, new output scrolls into view. If the user has moved upward, the current scroll position is preserved.
+Reader opens at the latest output, then preserves the viewport as new output arrives. The toolbar Auto-follow option opts into continuous following and is persisted in browser storage.
 
 ### Reader input
 
@@ -189,8 +190,8 @@ Rollback is low risk: switch to Terminal in the UI, or revert the Reader fronten
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | Frequent full-history capture uses CPU and memory | Large histories may make polling expensive | Serialize requests, pause while hidden, cap responses, and keep the polling interval modest |
-| Reader loses ANSI styling and screen coordinates | Some output is less expressive or ambiguous | Preserve whitespace and retain Terminal mode |
-| Capture updates replace selected DOM nodes | Browser selection may reset near changing lines | Reuse the common prefix and suffix; do not auto-follow after user scroll |
+| Reader does not implement every terminal control sequence or screen coordinate | Some output is less expressive or ambiguous | Parse only bounded SGR attributes and retain Terminal mode |
+| Capture updates replace selected DOM nodes | Browser selection may reset near changing lines | Reuse the common prefix and suffix; disable auto-follow by default |
 | Reader input cannot express all terminal actions | Complex TUI workflows may be blocked | Provide common control keys and a one-click Terminal fallback |
 | A WebUI client changes tmux dimensions | Other attached clients may see a resize | Fit to the active view and keep Reader dimensions within practical bounds |
 | Pane history contains secrets | Browser or proxy exposure could leak data | Loopback default, no-store responses, origin checks, and explicit remote-access warnings |
@@ -214,14 +215,13 @@ The browser already does this for Terminal mode, but alternate-screen buffers an
 
 Streaming diffs could reduce polling overhead, but the server would need per-client state, resynchronization, and backpressure. Full capture polling is smaller and easier to reason about for this local tool.
 
-### ANSI-styled capture
+### Full terminal emulation in Reader
 
-`capture-pane` can preserve escape sequences, which could be parsed into styled spans. This adds parser and selection complexity. Plain text is the safer first version and matches the Reader goal.
+Running each capture through another terminal emulator could reproduce more control sequences and screen behavior, but would add a second stateful terminal model and weaken native document interaction. Reader instead recognizes only SGR attributes emitted by `capture-pane -e`, builds styles from an allowlisted state model, and inserts all captured characters with `textContent`.
 
 ## Unresolved Questions
 
 - Should capture polling adapt to output activity and history size?
-- Should Reader optionally preserve a limited set of ANSI styles?
 - Should the target include an explicit window and pane selector?
 - Should users be able to pin Reader terminal dimensions per session?
 - Is a server-side capture cache useful when several browser tabs watch the same pane?
@@ -233,7 +233,6 @@ Streaming diffs could reduce polling overhead, but the server would need per-cli
 | Validate selection stability on very long, rapidly updating sessions | Maintainers | Follow-up |
 | Measure capture cost near the 8 MiB limit | Maintainers | Follow-up |
 | Test multiple attached clients with different dimensions | Maintainers | Follow-up |
-| Decide whether ANSI styling belongs in Reader | Maintainers | Open |
 
 ## Review
 

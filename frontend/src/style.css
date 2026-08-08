@@ -184,7 +184,7 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
 .reader-view { position: relative; min-height: 0; overflow: auto; background: #fbfaf7; outline: 0; scrollbar-color: #c8c6bd transparent; scrollbar-width: thin; scroll-behavior: smooth; }
 .reader-view::-webkit-scrollbar { width: 10px; }
 .reader-view::-webkit-scrollbar-thumb { border: 2px solid #fbfaf7; border-radius: 10px; background: #c8c6bd; }
-.reader-content { width: min(920px, 100%); min-height: 100%; margin: 0 auto; padding: 34px clamp(24px, 6vw, 76px) 76px; color: #30332f; font-family: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace; font-size: 13px; line-height: 1.7; }
+.reader-content { width: 100%; min-height: 100%; padding: 34px clamp(24px, 4vw, 64px) 76px; color: #30332f; font-family: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace; font-size: 13px; line-height: 1.7; }
 .reader-line { min-height: 1.7em; overflow-wrap: anywhere; white-space: pre-wrap; }
 .reader-status { position: absolute; inset: 0; display: grid; place-items: center; color: #969890; font-size: 11px; pointer-events: none; }
 .reader-content:not(:empty) + .reader-status { display: none; }
