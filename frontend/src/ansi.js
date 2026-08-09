@@ -1,8 +1,8 @@
 const ANSI_COLORS = [
-  '#242824', '#bd4b3f', '#5d7e5a', '#9b7525',
-  '#496f91', '#8a5d86', '#3d7d7a', '#e8e6df',
-  '#6f746e', '#d76755', '#759a6e', '#bd9140',
-  '#648aad', '#a675a1', '#58a09b', '#ffffff',
+  'var(--ansi-black)', 'var(--ansi-red)', 'var(--ansi-green)', 'var(--ansi-yellow)',
+  'var(--ansi-blue)', 'var(--ansi-magenta)', 'var(--ansi-cyan)', 'var(--ansi-white)',
+  'var(--ansi-bright-black)', 'var(--ansi-bright-red)', 'var(--ansi-bright-green)', 'var(--ansi-bright-yellow)',
+  'var(--ansi-bright-blue)', 'var(--ansi-bright-magenta)', 'var(--ansi-bright-cyan)', 'var(--ansi-bright-white)',
 ];
 
 const SGR_PATTERN = /\u001b\[([0-9;:]*)m/g;
@@ -135,7 +135,7 @@ function styleForState(state) {
   let foreground = state.foreground;
   let background = state.background;
   if (state.inverse) {
-    [foreground, background] = [background || '#fbfaf7', foreground || '#30332f'];
+    [foreground, background] = [background || 'var(--reader-bg)', foreground || 'var(--reader-fg)'];
   }
   if (foreground) style.color = foreground;
   if (background) style.backgroundColor = background;

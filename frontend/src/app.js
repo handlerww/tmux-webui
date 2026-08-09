@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { parseAnsiLines } from './ansi.js';
+import { nextThemeSetting, readThemeSetting, resolveTheme, storeThemeSetting } from './theme.js';
 import './style.css';
 
 const elements = {
@@ -24,6 +25,7 @@ const elements = {
   sessionList: document.querySelector('#session-list'),
   sessionSearch: document.querySelector('#session-search-input'),
   sessionSearchClear: document.querySelector('#session-search-clear'),
+  themeButton: document.querySelector('#theme-button'),
   refresh: document.querySelector('#refresh-button'),
   activeName: document.querySelector('#active-name'),
   sessionNameDisplay: document.querySelector('#session-name-display'),
@@ -45,20 +47,9 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const sessionNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const fitAddon = new FitAddon();
-const terminal = new Terminal({
-  allowTransparency: false,
-  cursorBlink: true,
-  cursorStyle: 'bar',
-  cursorInactiveStyle: 'outline',
-  fontFamily: '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
-  fontSize: 14,
-  lineHeight: 1.32,
-  letterSpacing: 0,
-  scrollback: 20000,
-  scrollOnUserInput: true,
-  smoothScrollDuration: 120,
-  rightClickSelectsWord: true,
-  theme: {
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const terminalThemes = {
+  light: {
     background: '#fbfaf7',
     foreground: '#252824',
     cursor: '#de6b48',
@@ -82,6 +73,47 @@ const terminal = new Terminal({
     brightCyan: '#58a09b',
     brightWhite: '#ffffff',
   },
+  dark: {
+    background: '#181d1b',
+    foreground: '#dfe5e0',
+    cursor: '#e78361',
+    cursorAccent: '#181d1b',
+    selectionBackground: '#47756c99',
+    selectionInactiveBackground: '#354e4899',
+    black: '#202624',
+    red: '#e07a6e',
+    green: '#91b88a',
+    yellow: '#d3aa58',
+    blue: '#82a9cb',
+    magenta: '#bd8bb7',
+    cyan: '#72b5b0',
+    white: '#d9ddd9',
+    brightBlack: '#7e8983',
+    brightRed: '#f08d7d',
+    brightGreen: '#a6cb9e',
+    brightYellow: '#e4bd6c',
+    brightBlue: '#99bddc',
+    brightMagenta: '#cfa1ca',
+    brightCyan: '#8bc9c4',
+    brightWhite: '#f5f7f4',
+  },
+};
+let themeSetting = readThemeSetting();
+let resolvedTheme = resolveTheme(themeSetting, systemThemeQuery.matches);
+const terminal = new Terminal({
+  allowTransparency: false,
+  cursorBlink: true,
+  cursorStyle: 'bar',
+  cursorInactiveStyle: 'outline',
+  fontFamily: '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
+  fontSize: 14,
+  lineHeight: 1.32,
+  letterSpacing: 0,
+  scrollback: 20000,
+  scrollOnUserInput: true,
+  smoothScrollDuration: 120,
+  rightClickSelectsWord: true,
+  theme: terminalThemes[resolvedTheme],
 });
 
 terminal.loadAddon(fitAddon);
@@ -97,11 +129,13 @@ let refreshInFlight = false;
 let viewMode = 'reader';
 let readerLines = [];
 let captureInFlight = false;
+let captureController = null;
 let captureTimer = null;
 let readerJumpPending = false;
 let renameInFlight = false;
 let readerAutoFollow = readReaderAutoFollow();
 elements.readerFollow.setAttribute('aria-pressed', String(readerAutoFollow));
+applyTheme(themeSetting, false);
 
 terminal.onData((data) => {
   sendInput(data);
@@ -121,6 +155,10 @@ terminal.attachCustomKeyEventHandler((event) => {
 });
 
 elements.refresh.addEventListener('click', () => loadSessions(true));
+elements.themeButton.addEventListener('click', () => applyTheme(nextThemeSetting(themeSetting)));
+systemThemeQuery.addEventListener('change', () => {
+  if (themeSetting === 'system') applyTheme('system', false);
+});
 elements.sessionSearch.addEventListener('input', () => {
   elements.sessionSearchClear.hidden = elements.sessionSearch.value.length === 0;
   renderSessions();
@@ -184,6 +222,27 @@ document.addEventListener('keydown', (event) => {
     elements.sessionSearch.focus();
   }
 });
+
+function applyTheme(setting, persist = true) {
+  themeSetting = persist ? storeThemeSetting(setting) : setting;
+  resolvedTheme = resolveTheme(themeSetting, systemThemeQuery.matches);
+  document.documentElement.dataset.theme = themeSetting;
+  document.documentElement.dataset.colorScheme = resolvedTheme;
+  document.querySelector('meta[name="theme-color"]').content = resolvedTheme === 'dark' ? '#151a18' : '#f3f1eb';
+  terminal.options.theme = terminalThemes[resolvedTheme];
+  updateThemeControls();
+}
+
+function updateThemeControls() {
+  elements.themeButton.dataset.themeSetting = themeSetting;
+  const label = `${themeSetting[0].toUpperCase()}${themeSetting.slice(1)}`;
+  const resolvedLabel = `${resolvedTheme[0].toUpperCase()}${resolvedTheme.slice(1)}`;
+  const next = nextThemeSetting(themeSetting);
+  const nextLabel = `${next[0].toUpperCase()}${next.slice(1)}`;
+  const description = `Theme: ${label}${themeSetting === 'system' ? ` (${resolvedLabel})` : ''}. Switch to ${nextLabel}`;
+  elements.themeButton.title = description;
+  elements.themeButton.setAttribute('aria-label', description);
+}
 
 async function loadSessions(showFeedback = false) {
   if (refreshInFlight) return;
@@ -303,19 +362,12 @@ function selectSession(session) {
   const changed = selectedSession?.id !== session.id;
   cancelRename(false);
   selectedSession = session;
+  if (changed) resetSessionOutput();
   updateActiveIdentity();
   elements.welcome.hidden = true;
   elements.terminalView.hidden = false;
   renderSessions();
   requestAnimationFrame(() => {
-    if (changed) {
-      terminal.reset();
-      terminal.clear();
-      readerLines = [];
-      elements.readerContent.replaceChildren();
-      elements.readerStatus.hidden = false;
-      elements.readerStatus.textContent = 'Loading output';
-    }
     if (viewMode === 'terminal') {
       fitAddon.fit();
     } else {
@@ -325,6 +377,21 @@ function selectSession(session) {
     refreshReader(true);
     focusActiveView();
   });
+}
+
+function resetSessionOutput() {
+  clearTimeout(captureTimer);
+  captureController?.abort();
+  captureController = null;
+  captureInFlight = false;
+  readerJumpPending = true;
+  terminal.reset();
+  terminal.clear();
+  readerLines = [];
+  elements.readerContent.replaceChildren();
+  elements.readerStatus.hidden = false;
+  elements.readerStatus.classList.add('loading');
+  elements.readerStatus.textContent = 'Loading output';
 }
 
 function updateActiveIdentity() {
@@ -492,12 +559,15 @@ async function refreshReader(jumpToBottom = false) {
   if (viewMode !== 'reader' || !selectedSession || document.hidden || captureInFlight) return;
   captureInFlight = true;
   const sessionName = selectedSession.name;
+  const controller = new AbortController();
+  captureController = controller;
   clearTimeout(captureTimer);
   try {
     const query = new URLSearchParams({ session: sessionName });
     const response = await fetch(`/api/capture?${query}`, {
       cache: 'no-store',
       headers: { Accept: 'text/plain' },
+      signal: controller.signal,
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const content = await response.text();
@@ -506,12 +576,16 @@ async function refreshReader(jumpToBottom = false) {
       readerJumpPending = false;
       renderReader(content, shouldJumpToBottom);
     }
-  } catch {
+  } catch (error) {
+    if (error.name === 'AbortError') return;
     if (selectedSession?.name === sessionName && readerLines.length === 0) {
       elements.readerStatus.hidden = false;
+      elements.readerStatus.classList.remove('loading');
       elements.readerStatus.textContent = 'Output unavailable';
     }
   } finally {
+    if (captureController !== controller) return;
+    captureController = null;
     captureInFlight = false;
     if (viewMode === 'reader' && selectedSession) {
       captureTimer = setTimeout(() => refreshReader(false), selectedSession.name === sessionName ? 850 : 0);
@@ -550,6 +624,7 @@ function renderReader(content, jumpToBottom) {
   elements.readerContent.insertBefore(fragment, elements.readerContent.children[prefix] ?? null);
   readerLines = nextLines.map((line) => line.key);
   elements.readerStatus.hidden = nextLines.length > 0;
+  elements.readerStatus.classList.remove('loading');
   if (nextLines.length === 0) elements.readerStatus.textContent = 'Waiting for output';
 
   if (jumpToBottom || readerAutoFollow) scrollReaderToBottom();

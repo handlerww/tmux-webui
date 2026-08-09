@@ -7,7 +7,7 @@ test('parses basic ANSI foreground colors and resets', () => {
   const [line] = parseAnsiLines('plain \u001b[31mred\u001b[0m end\n');
   assert.deepEqual(line.segments.map(({ text, style }) => ({ text, style })), [
     { text: 'plain ', style: {} },
-    { text: 'red', style: { color: '#bd4b3f' } },
+    { text: 'red', style: { color: 'var(--ansi-red)' } },
     { text: ' end', style: {} },
   ]);
 });
@@ -20,9 +20,17 @@ test('supports indexed and RGB colors', () => {
 
 test('preserves active styles across captured lines', () => {
   const lines = parseAnsiLines('\u001b[32mfirst\nsecond\u001b[0m\nplain');
-  assert.equal(lines[0].segments[0].style.color, '#5d7e5a');
-  assert.equal(lines[1].segments[0].style.color, '#5d7e5a');
+  assert.equal(lines[0].segments[0].style.color, 'var(--ansi-green)');
+  assert.equal(lines[1].segments[0].style.color, 'var(--ansi-green)');
   assert.deepEqual(lines[2].segments[0].style, {});
+});
+
+test('uses theme-aware colors for inverse text', () => {
+  const [line] = parseAnsiLines('\u001b[7minverse');
+  assert.deepEqual(line.segments[0].style, {
+    color: 'var(--reader-bg)',
+    backgroundColor: 'var(--reader-fg)',
+  });
 });
 
 test('keeps output text as data instead of HTML', () => {
