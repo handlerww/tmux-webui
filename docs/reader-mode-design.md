@@ -26,7 +26,7 @@ Reader mode keeps tmux and the attached application unchanged while adding a doc
 
 ## Goals
 
-- Discover running tmux sessions and show their active paths.
+- Discover running tmux sessions, create detached sessions, and show their active paths.
 - Preserve existing tmux-owned sessions and processes.
 - Render the active pane history as selectable DOM text.
 - Support native browser scrolling, selection, copy, and paste into an input box.
@@ -78,9 +78,9 @@ flowchart LR
     Session --> Client --> PTY --> WS --> Terminal
 ```
 
-The browser opens one WebSocket-backed tmux client for interaction. xterm.js continues to consume output in both views, even when its visual surface is hidden. This keeps terminal modes such as bracketed paste synchronized for Reader input.
+Each visible editor opens one WebSocket-backed tmux client for interaction. xterm.js continues to consume output in both views, even when its visual surface is hidden. This keeps terminal modes such as bracketed paste synchronized for Reader input.
 
-Reader content uses a separate polling path. The Go server asks tmux to render its current pane state, and the browser converts the returned text and SGR attributes to normal DOM lines and styled spans.
+Reader content uses a separate polling path. The Go server asks tmux to render its current pane state, and the browser converts the returned text and SGR attributes to normal DOM lines and styled spans. Visible Reader tabs refresh quickly; inactive open Reader tabs refresh every three seconds so their cached DOM is ready before activation without retaining another tmux client.
 
 ## Detailed Design
 
@@ -89,6 +89,12 @@ Reader content uses a separate polling path. The Go server asks tmux to render i
 `GET /api/sessions` calls `tmux list-sessions` with a fixed format. The response includes the session name, active path, window count, attached client count, and last activity time.
 
 The UI supports search by session name or path. Paths wrap naturally and are limited to two lines in session cards and the active-session header.
+
+### Session creation
+
+`POST /api/sessions` accepts a same-origin JSON request containing an absolute working-directory path. The server caps and strictly decodes the request body, validates the path syntax, serializes creation, reads the live session list, and selects the smallest unused canonical numeric name starting at `0`. It then runs `tmux new-session -d -P -F <format> -s <name> -c <path>` without a shell. If an external creator wins the name race, the server refreshes the list and retries. tmux returns the newly created session metadata in the same format used by session discovery, and the UI adds it to the sidebar and replaces the transient creation tab in place. The creation tab keeps its draft while another tab is active and is deliberately omitted from the persisted workspace layout.
+
+The initial window uses tmux's default shell in the selected directory. The browser persists the 10 most recently opened absolute paths and renders them as a clickable list below the creation field, while still allowing a new path to be typed. No startup command is accepted from the browser. The server deliberately leaves path existence checks to host tmux so host paths continue to work when the WebUI runs in its host-tmux container mode.
 
 ### Pane capture API
 
@@ -108,7 +114,7 @@ The active pane of the selected session is the capture target. tmux, rather than
 
 Reader mode polls the capture API approximately every 850 ms. Requests are serialized, so a slow capture cannot create an unbounded queue.
 
-The response is normalized to line feed separators, and empty rows at the end are removed. A limited SGR parser supports the 16-color palette, 256-color palette, RGB foreground and background colors, and common emphasis attributes. Each logical line becomes a `div` with `white-space: pre-wrap`; style runs become spans. Values are always assigned with `textContent`, so captured output is never interpreted as HTML.
+The response is normalized to line feed separators, and empty rows at the end are removed. A limited terminal-sequence parser supports the 16-color palette, 256-color palette, RGB foreground and background colors, common emphasis attributes, and OSC 8 hyperlinks. Only absolute HTTP and HTTPS hyperlink targets become anchors; unsupported OSC controls are stripped. Each logical line becomes a `div` with `white-space: pre-wrap`; style runs become spans. Values are always assigned with `textContent`, so captured output is never interpreted as HTML.
 
 On every refresh, the browser finds the common prefix and suffix between the old and new line arrays. Only the changed middle range is replaced. This preserves stable DOM nodes for most append-only output and makes browser selection less likely to reset.
 
@@ -132,10 +138,10 @@ While Reader is visible, the browser estimates terminal dimensions from the Read
 
 ### Failure behavior
 
-- A missing session produces a clear API error and is later marked ended by session refresh.
+- A missing session produces a clear API error, and its open tabs close after the next successful session refresh confirms that it ended.
 - A capture failure leaves existing Reader content in place. If no content has loaded, the UI shows `Output unavailable`.
 - A closed WebSocket disables effective input and produces `Not connected` when the user tries to send.
-- Reader polling resumes after the page becomes visible again.
+- Reader polling for all open tabs resumes after the page becomes visible again.
 - Reconnect creates a new tmux client but does not terminate the underlying session.
 
 ### Security and privacy

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"tmux-webui/internal/tmux"
 )
 
 func TestDimensions(t *testing.T) {
@@ -59,6 +61,39 @@ func TestValidateSessionName(t *testing.T) {
 	}
 }
 
+func TestValidateSessionPath(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{value: "/srv/work tree"},
+		{value: "/srv/../work"},
+		{value: "", want: "A working directory is required"},
+		{value: "relative/path", want: "Working directories must be absolute paths"},
+		{value: " /srv/work", want: "Working directories cannot start or end with whitespace"},
+		{value: "/srv/work\nnext", want: "Working directories cannot contain control characters"},
+	}
+	for _, test := range tests {
+		path, got := validateSessionPath(test.value)
+		if got != test.want {
+			t.Errorf("validateSessionPath(%q) error = %q, want %q", test.value, got, test.want)
+		}
+		if got == "" && !filepath.IsAbs(path) {
+			t.Errorf("validateSessionPath(%q) returned non-absolute path %q", test.value, path)
+		}
+	}
+}
+
+func TestNextNumericSessionNameUsesSmallestGap(t *testing.T) {
+	sessions := []tmux.Session{{Name: "0"}, {Name: "2"}, {Name: "01"}, {Name: "work"}, {Name: "-1"}}
+	if got := nextNumericSessionName(sessions); got != "1" {
+		t.Fatalf("nextNumericSessionName() = %q, want 1", got)
+	}
+	if got := nextNumericSessionName(nil); got != "0" {
+		t.Fatalf("nextNumericSessionName(nil) = %q, want 0", got)
+	}
+}
+
 func TestRenameSession(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	logPath := filepath.Join(temporaryDirectory, "arguments")
@@ -95,6 +130,90 @@ exit 1
 	}
 	if got, want := strings.TrimSpace(string(arguments)), "-t|$7|new work"; got != want {
 		t.Fatalf("rename arguments = %q, want %q", got, want)
+	}
+}
+
+func TestCreateSession(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	logPath := filepath.Join(temporaryDirectory, "arguments")
+	tmuxBinary := filepath.Join(temporaryDirectory, "fake-tmux")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "list-sessions" ]; then
+  printf '%%s\n' '$1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>/srv/zero<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  printf '%%s\n' '$3<<<tmux-webui-field>>>2<<<tmux-webui-field>>>/srv/two<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  exit 0
+fi
+if [ "$1" = "new-session" ]; then
+  printf '%%s\n' "$@" > %q
+  printf '%%s\n' '$9<<<tmux-webui-field>>>1<<<tmux-webui-field>>>/srv/work tree<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  exit 0
+fi
+exit 1
+`, logPath)
+	if err := os.WriteFile(tmuxBinary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := New(tmuxBinary, logger)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/sessions", bytes.NewBufferString(`{"path":"/srv/work tree"}`))
+	request.Header.Set("Origin", "http://127.0.0.1")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("got status %d with body %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"id":"$9"`) || !strings.Contains(response.Body.String(), `"name":"1"`) {
+		t.Fatalf("unexpected response body %s", response.Body.String())
+	}
+	arguments, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(string(arguments)), "\n")
+	if len(got) != 9 || got[0] != "new-session" || got[1] != "-d" || got[2] != "-P" || got[3] != "-F" || got[5] != "-s" || got[6] != "1" || got[7] != "-c" || got[8] != "/srv/work tree" {
+		t.Fatalf("unexpected create arguments: %#v", got)
+	}
+}
+
+func TestCreateSessionRetriesAfterNumericNameRace(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	racePath := filepath.Join(temporaryDirectory, "race-won")
+	tmuxBinary := filepath.Join(temporaryDirectory, "fake-tmux")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "list-sessions" ]; then
+  if [ -f %q ]; then
+    printf '%%s\n' '$1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>/srv/external<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  fi
+  exit 0
+fi
+if [ "$1" = "new-session" ] && [ "$7" = "0" ]; then
+  touch %q
+  printf '%%s\n' 'duplicate session: 0' >&2
+  exit 1
+fi
+if [ "$1" = "new-session" ] && [ "$7" = "1" ]; then
+  printf '%%s\n' '$2<<<tmux-webui-field>>>1<<<tmux-webui-field>>>/srv/work<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  exit 0
+fi
+exit 1
+`, racePath, racePath)
+	if err := os.WriteFile(tmuxBinary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := New(tmuxBinary, logger)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/sessions", bytes.NewBufferString(`{"path":"/srv/work"}`))
+	request.Header.Set("Origin", "http://127.0.0.1")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"name":"1"`) {
+		t.Fatalf("got status %d with body %s", response.Code, response.Body.String())
 	}
 }
 

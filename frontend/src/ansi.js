@@ -5,22 +5,23 @@ const ANSI_COLORS = [
   'var(--ansi-bright-blue)', 'var(--ansi-bright-magenta)', 'var(--ansi-bright-cyan)', 'var(--ansi-bright-white)',
 ];
 
-const SGR_PATTERN = /\u001b\[([0-9;:]*)m/g;
+const TERMINAL_SEQUENCE_PATTERN = /\u001b(?:\[([0-9;:]*)m|\]([^\u0007\u001b\u009c]*)(?:\u0007|\u001b\\|\u009c))/g;
 
 export function parseAnsiLines(content) {
   const rawLines = content.replaceAll('\r', '').split('\n');
   while (rawLines.length > 0 && rawLines.at(-1) === '') rawLines.pop();
 
-  const state = defaultState();
+  const state = { ...defaultState(), href: '' };
   return rawLines.map((rawLine) => {
     const initialState = stateSignature(state);
     const segments = [];
     let offset = 0;
-    SGR_PATTERN.lastIndex = 0;
-    for (let match = SGR_PATTERN.exec(rawLine); match; match = SGR_PATTERN.exec(rawLine)) {
+    TERMINAL_SEQUENCE_PATTERN.lastIndex = 0;
+    for (let match = TERMINAL_SEQUENCE_PATTERN.exec(rawLine); match; match = TERMINAL_SEQUENCE_PATTERN.exec(rawLine)) {
       appendSegment(segments, rawLine.slice(offset, match.index), state);
-      applySgr(state, parseParameters(match[1]));
-      offset = SGR_PATTERN.lastIndex;
+      if (match[1] !== undefined) applySgr(state, parseParameters(match[1]));
+      else applyOsc(state, match[2]);
+      offset = TERMINAL_SEQUENCE_PATTERN.lastIndex;
     }
     appendSegment(segments, rawLine.slice(offset), state);
     return {
@@ -28,6 +29,23 @@ export function parseAnsiLines(content) {
       segments,
     };
   });
+}
+
+function applyOsc(state, payload) {
+  if (!payload.startsWith('8;')) return;
+  const uriSeparator = payload.indexOf(';', 2);
+  if (uriSeparator < 0) return;
+  state.href = safeHyperlink(payload.slice(uriSeparator + 1));
+}
+
+function safeHyperlink(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch {
+    return '';
+  }
 }
 
 function defaultState() {
@@ -127,7 +145,9 @@ function appendSegment(segments, text, state) {
     previous.text += text;
     return;
   }
-  segments.push({ text, signature, style: styleForState(state) });
+  const segment = { text, signature, style: styleForState(state) };
+  if (state.href) segment.href = state.href;
+  segments.push(segment);
 }
 
 function styleForState(state) {
@@ -161,5 +181,6 @@ function stateSignature(state) {
     Number(state.inverse),
     Number(state.hidden),
     Number(state.strike),
+    state.href,
   ].join('|');
 }

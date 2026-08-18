@@ -35,15 +35,7 @@ type Client struct {
 }
 
 func (c Client) List(ctx context.Context) ([]Session, error) {
-	format := strings.Join([]string{
-		"#{session_id}",
-		"#{session_name}",
-		"#{session_path}",
-		"#{session_windows}",
-		"#{session_attached}",
-		"#{session_created}",
-		"#{session_activity}",
-	}, fieldSeparator)
+	format := sessionFormat()
 	cmd := exec.CommandContext(ctx, c.Binary, "list-sessions", "-F", format)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -64,6 +56,28 @@ func (c Client) List(ctx context.Context) ([]Session, error) {
 		return sessions[i].LastActivity.After(sessions[j].LastActivity)
 	})
 	return sessions, nil
+}
+
+// Create starts a detached session and returns the session metadata printed by
+// tmux. The name and working directory are separate arguments without shell
+// interpolation.
+func (c Client) Create(ctx context.Context, name, workingDirectory string) (Session, error) {
+	cmd := exec.CommandContext(ctx, c.Binary, createArguments(name, workingDirectory, sessionFormat())...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(output)), "duplicate session") {
+			return Session{}, fmt.Errorf("%w: %s", ErrSessionExists, strings.TrimSpace(string(output)))
+		}
+		return Session{}, fmt.Errorf("create tmux session: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	sessions, err := parseSessions(string(output))
+	if err != nil {
+		return Session{}, fmt.Errorf("read created tmux session: %w", err)
+	}
+	if len(sessions) != 1 {
+		return Session{}, fmt.Errorf("read created tmux session: expected 1 session, got %d", len(sessions))
+	}
+	return sessions[0], nil
 }
 
 func (c Client) Has(ctx context.Context, name string) (bool, error) {
@@ -118,8 +132,24 @@ func captureArguments(name string) []string {
 	return []string{"capture-pane", "-p", "-e", "-J", "-S", "-", "-t", name}
 }
 
+func createArguments(name, workingDirectory, format string) []string {
+	return []string{"new-session", "-d", "-P", "-F", format, "-s", name, "-c", workingDirectory}
+}
+
 func renameArguments(target, name string) []string {
 	return []string{"rename-session", "-t", target, name}
+}
+
+func sessionFormat() string {
+	return strings.Join([]string{
+		"#{session_id}",
+		"#{session_name}",
+		"#{session_path}",
+		"#{session_windows}",
+		"#{session_attached}",
+		"#{session_created}",
+		"#{session_activity}",
+	}, fieldSeparator)
 }
 
 func parseSessions(output string) ([]Session, error) {

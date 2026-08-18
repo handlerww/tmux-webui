@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -25,9 +27,10 @@ import (
 )
 
 type Server struct {
-	tmux   tmux.Client
-	logger *slog.Logger
-	static fs.FS
+	tmux     tmux.Client
+	logger   *slog.Logger
+	static   fs.FS
+	createMu sync.Mutex
 }
 
 type resizeMessage struct {
@@ -39,6 +42,10 @@ type resizeMessage struct {
 type renameSessionRequest struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+type createSessionRequest struct {
+	Path string `json:"path"`
 }
 
 func New(tmuxBinary string, logger *slog.Logger) http.Handler {
@@ -54,6 +61,7 @@ func New(tmuxBinary string, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", server.health)
 	mux.HandleFunc("GET /api/sessions", server.sessions)
+	mux.HandleFunc("POST /api/sessions", server.createSession)
 	mux.HandleFunc("PATCH /api/sessions/rename", server.renameSession)
 	mux.HandleFunc("GET /api/capture", server.capture)
 	mux.HandleFunc("GET /ws", server.connect)
@@ -109,6 +117,93 @@ func (s *Server) sessions(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) createSession(writer http.ResponseWriter, request *http.Request) {
+	if !sameOrigin(request) {
+		writeError(writer, http.StatusForbidden, "Request origin is not allowed")
+		return
+	}
+
+	request.Body = http.MaxBytesReader(writer, request.Body, 8<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input createSessionRequest
+	if err := decoder.Decode(&input); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid create request")
+		return
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid create request")
+		return
+	}
+	workingDirectory, message := validateSessionPath(input.Path)
+	if message != "" {
+		writeError(writer, http.StatusBadRequest, message)
+		return
+	}
+
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
+	defer cancel()
+	for attempt := 0; attempt < 3; attempt++ {
+		sessions, err := s.tmux.List(ctx)
+		if err != nil {
+			s.logger.Error("failed to list tmux sessions before create", "error", err)
+			writeError(writer, http.StatusServiceUnavailable, "Unable to read tmux sessions")
+			return
+		}
+		name := nextNumericSessionName(sessions)
+		session, err := s.tmux.Create(ctx, name, workingDirectory)
+		if errors.Is(err, tmux.ErrSessionExists) {
+			continue
+		}
+		if err != nil {
+			s.logger.Error("failed to create tmux session", "name", name, "path", workingDirectory, "error", err)
+			writeError(writer, http.StatusServiceUnavailable, "Unable to create the tmux session in that directory")
+			return
+		}
+		writeJSON(writer, http.StatusCreated, map[string]any{"session": session})
+		return
+	}
+	writeError(writer, http.StatusConflict, "Could not allocate an unused numeric session name")
+}
+
+func nextNumericSessionName(sessions []tmux.Session) string {
+	used := make(map[int]struct{}, len(sessions))
+	for _, session := range sessions {
+		value, err := strconv.Atoi(session.Name)
+		if err == nil && value >= 0 && strconv.Itoa(value) == session.Name {
+			used[value] = struct{}{}
+		}
+	}
+	for candidate := 0; ; candidate++ {
+		if _, exists := used[candidate]; !exists {
+			return strconv.Itoa(candidate)
+		}
+	}
+}
+
+func validateSessionPath(value string) (string, string) {
+	if value == "" {
+		return "", "A working directory is required"
+	}
+	if !utf8.ValidString(value) || len(value) > 4096 {
+		return "", "Working directories must be valid UTF-8 paths up to 4096 bytes"
+	}
+	if strings.TrimSpace(value) != value {
+		return "", "Working directories cannot start or end with whitespace"
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return "", "Working directories cannot contain control characters"
+		}
+	}
+	if !filepath.IsAbs(value) {
+		return "", "Working directories must be absolute paths"
+	}
+	return filepath.Clean(value), ""
 }
 
 func (s *Server) renameSession(writer http.ResponseWriter, request *http.Request) {
