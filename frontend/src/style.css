@@ -126,6 +126,17 @@ button:focus-visible { outline: 3px solid #77a9a0; outline-offset: 2px; }
 .create-session-field > span { display: block; margin-bottom: 7px; color: #6f736b; font-size: 11px; font-weight: 650; }
 .create-session-form input { width: 100%; height: 42px; padding: 8px 11px; border: 1px solid #83a9a1; border-radius: 9px; outline: 0; color: #30332e; background: #fffefa; font: inherit; font-size: 13px; box-shadow: 0 0 0 3px #77a9a018; }
 .create-session-hint { margin: 8px 1px 0; color: #858880; font-size: 10px; line-height: 1.5; }
+.create-session-recent { margin-top: 22px; padding-top: 18px; border-top: 1px solid #dedbd3; }
+.create-session-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.create-session-recent-heading strong { color: #555a53; font-size: 11px; font-weight: 720; }
+.create-session-recent-heading span { color: #92958e; font-size: 9px; }
+.create-session-recent-list { display: grid; gap: 4px; }
+.create-session-recent-path { display: flex; width: 100%; min-width: 0; align-items: center; gap: 9px; padding: 8px 10px; border: 0; border-radius: 7px; color: #555a53; background: transparent; text-align: left; cursor: pointer; }
+.create-session-recent-path:hover:not(:disabled), .create-session-recent-path:focus-visible { color: #294d46; background: #e8eeea; }
+.create-session-recent-path:disabled { cursor: default; opacity: .5; }
+.create-session-recent-path > span:last-child { min-width: 0; overflow: hidden; font-family: "SFMono-Regular", "Cascadia Code", monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.create-session-recent-icon { flex: none; color: #75948d; font-size: 14px; line-height: 1; }
+.create-session-recent-empty { margin: 0; padding: 10px; color: #969991; font-size: 10px; }
 .create-session-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 18px; }
 .create-session-actions button { min-height: 34px; padding: 5px 12px; border: 1px solid #d5d2ca; border-radius: 7px; color: #60645c; background: #fffefa; font-size: 10px; font-weight: 650; cursor: pointer; }
 .create-session-actions button[type="submit"] { border-color: #315a52; color: #fffefa; background: #315a52; }
@@ -412,6 +423,14 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
 :root[data-color-scheme="dark"] .create-session-title code { color: #b9ded6; background: #30413c; }
 :root[data-color-scheme="dark"] .create-session-field > span,
 :root[data-color-scheme="dark"] .create-session-hint { color: #929c96; }
+:root[data-color-scheme="dark"] .create-session-recent { border-color: #39413d; }
+:root[data-color-scheme="dark"] .create-session-recent-heading strong { color: #c0c8c3; }
+:root[data-color-scheme="dark"] .create-session-recent-heading span,
+:root[data-color-scheme="dark"] .create-session-recent-empty { color: #7f8983; }
+:root[data-color-scheme="dark"] .create-session-recent-path { color: #bac2bd; }
+:root[data-color-scheme="dark"] .create-session-recent-path:hover:not(:disabled),
+:root[data-color-scheme="dark"] .create-session-recent-path:focus-visible { color: #c8e5df; background: #303834; }
+:root[data-color-scheme="dark"] .create-session-recent-icon { color: #83b4aa; }
 :root[data-color-scheme="dark"] .create-session-form input,
 :root[data-color-scheme="dark"] .rename-form input { border-color: #628f86; color: #e5eae6; background: #191f1c; box-shadow: 0 0 0 3px #70a49925; }
 :root[data-color-scheme="dark"] .create-session-actions button,
@@ -586,6 +605,8 @@ kbd { padding: 3px 6px; border: 1px solid #d3d0c8; border-bottom-width: 2px; bor
   .create-session-form { padding: 11px; }
   .create-session-title { align-items: flex-start; flex-direction: column; gap: 5px; }
   .create-session-form input { height: 42px; font-size: 16px; }
+  .create-session-recent-path { min-height: 40px; padding-inline: 8px; }
+  .create-session-recent-path > span:last-child { font-size: 10px; }
   .create-session-actions { gap: 8px; }
   .create-session-actions button { min-height: 38px; padding-inline: 13px; font-size: 12px; }
   .session-list { display: block; overflow-x: hidden; overflow-y: auto; }

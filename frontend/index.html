@@ -99,10 +99,16 @@
       </div>
       <label class="create-session-field" for="create-session-path">
         <span>Working directory</span>
-        <input id="create-session-path" type="text" maxlength="4096" list="recent-session-paths" placeholder="/absolute/path/to/project" autocomplete="off" spellcheck="false" aria-describedby="create-session-hint" required />
+        <input id="create-session-path" type="text" maxlength="4096" placeholder="/absolute/path/to/project" autocomplete="off" spellcheck="false" aria-describedby="create-session-hint" required />
       </label>
-      <datalist id="recent-session-paths"></datalist>
-      <p id="create-session-hint" class="create-session-hint">Choose a recently opened path or enter a new absolute path.</p>
+      <p id="create-session-hint" class="create-session-hint">Enter a new absolute path or choose one below.</p>
+      <section class="create-session-recent" aria-labelledby="recent-session-paths-title">
+        <div class="create-session-recent-heading">
+          <strong id="recent-session-paths-title">Recently opened</strong>
+          <span>Last 10 paths</span>
+        </div>
+        <div id="recent-session-paths" class="create-session-recent-list"></div>
+      </section>
       <div class="create-session-actions">
         <button id="create-session-cancel" type="button">Cancel</button>
         <button id="create-session-save" type="submit">Create session</button>

@@ -10,7 +10,7 @@ Reader is the default view. tmux interprets the terminal state, and the browser 
 
 - Automatically lists local tmux sessions with their window count, attached clients, path, and recent activity.
 - Opens each tmux session once as a tab; choosing an already-open session focuses its existing tab.
-- Opens creation as a transient tab in the active editor group, then creates a detached tmux session from a recent or newly entered working directory, assigns the smallest unused numeric name, and replaces the creation tab in place.
+- Opens creation as a transient tab in the active editor group, shows the 10 most recently opened paths below the input, then creates a detached tmux session and replaces the creation tab in place.
 - Closes tabs without terminating their tmux sessions, reorders tabs by dragging, and moves tabs between editor groups.
 - Drags sessions directly from the sidebar into an editor group or onto an edge to create a split, without duplicating an already-open session.
 - Splits any editor group right or down, supports nested layouts, and resizes split dividers by pointer or keyboard.

@@ -20,3 +20,9 @@ test('moves a reused path to the front and enforces the history limit', () => {
   assert.deepEqual(addRecentPath(['/a', '/b', '/c'], '/d', 3), ['/d', '/a', '/b']);
   assert.deepEqual(addRecentPath(['/a'], 'relative', 3), ['/a']);
 });
+
+test('shows at most ten path records by default', () => {
+  const paths = Array.from({ length: 12 }, (_, index) => `/project/${index}`);
+  assert.equal(sessionPathOptions(paths, []).length, 10);
+  assert.equal(addRecentPath(paths.slice(0, 10), '/project/new').length, 10);
+});

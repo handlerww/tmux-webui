@@ -57,7 +57,7 @@ const sidebarWidthSetting = 'tmux-webui.sidebarWidth';
 const workspaceSetting = 'tmux-webui.workspace.v1';
 const readerAutoFollowSetting = 'tmux-webui.readerAutoFollow';
 const recentPathsSetting = 'tmux-webui.recentPaths.v1';
-const maximumRecentPaths = 12;
+const maximumRecentPaths = 10;
 const defaultSidebarWidth = 282;
 const minimumSidebarWidth = 220;
 const compactMinimumSidebarWidth = 190;
@@ -800,6 +800,7 @@ async function createSession() {
   elements.createSessionPath.disabled = true;
   elements.createSessionSave.disabled = true;
   elements.createSessionCancel.disabled = true;
+  renderCreateSessionOptions();
   renderSessions();
   try {
     const response = await fetch('/api/sessions', {
@@ -830,6 +831,7 @@ async function createSession() {
     elements.createSessionPath.disabled = false;
     elements.createSessionSave.disabled = false;
     elements.createSessionCancel.disabled = false;
+    renderCreateSessionOptions();
     renderSessions();
   }
 }
@@ -837,15 +839,38 @@ async function createSession() {
 function renderCreateSessionOptions() {
   elements.createSessionName.textContent = nextNumericSessionName(sessions);
   elements.recentSessionPaths.replaceChildren();
-  for (const path of recentSessionPaths()) {
-    const option = document.createElement('option');
-    option.value = path;
-    elements.recentSessionPaths.append(option);
+  const paths = recentSessionPaths();
+  if (paths.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'create-session-recent-empty';
+    empty.textContent = 'No recently opened paths yet.';
+    elements.recentSessionPaths.append(empty);
+    return;
+  }
+  for (const path of paths) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'create-session-recent-path';
+    button.title = path;
+    button.disabled = createInFlight;
+    const icon = document.createElement('span');
+    icon.className = 'create-session-recent-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '↺';
+    const label = document.createElement('span');
+    label.textContent = path;
+    button.append(icon, label);
+    button.addEventListener('click', () => {
+      if (createInFlight) return;
+      elements.createSessionPath.value = path;
+      elements.createSessionPath.focus();
+    });
+    elements.recentSessionPaths.append(button);
   }
 }
 
 function recentSessionPaths() {
-  return sessionPathOptions(recentPaths, sessions, maximumRecentPaths);
+  return sessionPathOptions(recentPaths, [], maximumRecentPaths);
 }
 
 function rememberRecentPath(path) {

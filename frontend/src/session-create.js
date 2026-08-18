@@ -5,12 +5,12 @@ export function nextNumericSessionName(sessions) {
   }
 }
 
-export function sessionPathOptions(recentPaths, sessions, limit = 12) {
+export function sessionPathOptions(recentPaths, sessions, limit = 10) {
   const paths = [...recentPaths, ...sessions.map((session) => session.path)];
   return [...new Set(paths.filter(isAbsolutePath))].slice(0, limit);
 }
 
-export function addRecentPath(recentPaths, path, limit = 12) {
+export function addRecentPath(recentPaths, path, limit = 10) {
   if (!isAbsolutePath(path)) return recentPaths;
   return [path, ...recentPaths.filter((candidate) => candidate !== path)].slice(0, limit);
 }
