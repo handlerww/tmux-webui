@@ -92,9 +92,9 @@ The UI supports search by session name or path. Paths wrap naturally and are lim
 
 ### Session creation
 
-`POST /api/sessions` accepts a same-origin JSON request containing a session name. The server validates the name, caps and strictly decodes the request body, then runs `tmux new-session -d -P -F <format> -s <name>` without a shell. tmux returns the newly created session metadata in the same format used by session discovery. The UI adds it to the sidebar and opens it immediately. Duplicate names return HTTP 409 without changing the existing session.
+`POST /api/sessions` accepts a same-origin JSON request containing an absolute working-directory path. The server caps and strictly decodes the request body, validates the path syntax, serializes creation, reads the live session list, and selects the smallest unused canonical numeric name starting at `0`. It then runs `tmux new-session -d -P -F <format> -s <name> -c <path>` without a shell. If an external creator wins the name race, the server refreshes the list and retries. tmux returns the newly created session metadata in the same format used by session discovery, and the UI adds it to the sidebar and replaces the transient creation tab in place. The creation tab keeps its draft while another tab is active and is deliberately omitted from the persisted workspace layout.
 
-The initial window uses tmux's default shell and inherits the tmux command's working directory. No startup command is accepted from the browser.
+The initial window uses tmux's default shell in the selected directory. The browser persists up to 12 recently opened absolute paths and combines them with paths from live sessions in the creation field, while still allowing a new path to be typed. No startup command is accepted from the browser. The server deliberately leaves path existence checks to host tmux so host paths continue to work when the WebUI runs in its host-tmux container mode.
 
 ### Pane capture API
 

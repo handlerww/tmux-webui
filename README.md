@@ -10,7 +10,7 @@ Reader is the default view. tmux interprets the terminal state, and the browser 
 
 - Automatically lists local tmux sessions with their window count, attached clients, path, and recent activity.
 - Opens each tmux session once as a tab; choosing an already-open session focuses its existing tab.
-- Creates detached tmux sessions from the sidebar and opens them immediately in the active editor group.
+- Opens creation as a transient tab in the active editor group, then creates a detached tmux session from a recent or newly entered working directory, assigns the smallest unused numeric name, and replaces the creation tab in place.
 - Closes tabs without terminating their tmux sessions, reorders tabs by dragging, and moves tabs between editor groups.
 - Drags sessions directly from the sidebar into an editor group or onto an edge to create a split, without duplicating an already-open session.
 - Splits any editor group right or down, supports nested layouts, and resizes split dividers by pointer or keyboard.
@@ -169,7 +169,7 @@ Visible tab Input   ── WebSocket ──── Linux PTY ── tmux client �
 Visible tab Terminal + xterm.js ──────┘
 ```
 
-The backend accepts only sessions that exactly match the output of `tmux list-sessions`, and rename operations target the stable tmux session ID. New sessions are created detached with validated names. Browser input and session names are never passed through a local shell. On connection, it enables `mouse on` for the selected tmux session so panes and full-screen applications can receive mouse events.
+The backend accepts only sessions that exactly match the output of `tmux list-sessions`, and rename operations target the stable tmux session ID. New sessions are created detached in a validated absolute working directory and receive the smallest unused numeric name. Browser input, paths, and session names are never passed through a local shell. On connection, it enables `mouse on` for the selected tmux session so panes and full-screen applications can receive mouse events.
 
 Each visible editor group owns its own PTY/WebSocket and fast Reader refresh
 loop. Inactive open Reader tabs disconnect their PTY/WebSocket but refresh at a

@@ -43,6 +43,65 @@ export function findTabById(workspace, tabId) {
   return null;
 }
 
+export function findCreateTab(workspace) {
+  for (const group of groupsInOrder(workspace.root)) {
+    const tab = group.tabs.find((item) => item.kind === 'create');
+    if (tab) return { group, tab };
+  }
+  return null;
+}
+
+export function openCreateTab(workspace, createTabId) {
+  const existing = findCreateTab(workspace);
+  if (existing) {
+    existing.group.activeTabId = existing.tab.id;
+    workspace.activeGroupId = existing.group.id;
+    return { ...existing, created: false };
+  }
+  let group = findGroup(workspace, workspace.activeGroupId) ?? groupsInOrder(workspace.root)[0];
+  if (!group) return null;
+  const tab = { id: createTabId(), kind: 'create' };
+  group.tabs.push(tab);
+  group.activeTabId = tab.id;
+  workspace.activeGroupId = group.id;
+  return { group, tab, created: true };
+}
+
+export function replaceCreateTab(workspace, sessionId) {
+  const found = findCreateTab(workspace);
+  if (!found) return null;
+  delete found.tab.kind;
+  found.tab.sessionId = sessionId;
+  return found;
+}
+
+export function workspaceForStorage(workspace) {
+  function copyPersistentNode(node) {
+    if (!node) return null;
+    if (node.type === 'group') {
+      const tabs = node.tabs
+        .filter((tab) => tab.kind !== 'create')
+        .map((tab) => ({ id: tab.id, sessionId: tab.sessionId }));
+      if (tabs.length === 0) return null;
+      const activeTabId = tabs.some((tab) => tab.id === node.activeTabId) ? node.activeTabId : tabs[0].id;
+      return createGroup(node.id, tabs, activeTabId);
+    }
+    if (node.type !== 'split') return null;
+    const children = node.children.map(copyPersistentNode).filter(Boolean);
+    if (children.length === 0) return null;
+    if (children.length === 1) return children[0];
+    return { ...node, children };
+  }
+
+  const root = copyPersistentNode(workspace?.root);
+  if (!root) return null;
+  const groups = groupsInOrder(root);
+  const activeGroupId = groups.some((group) => group.id === workspace.activeGroupId)
+    ? workspace.activeGroupId
+    : groups[0].id;
+  return { root, activeGroupId };
+}
+
 export function openSession(workspace, sessionId, createTabId) {
   const existing = findTab(workspace, sessionId, workspace.activeGroupId);
   if (existing) {
@@ -106,7 +165,7 @@ export function closeTab(workspace, tabId, createGroupId) {
 export function closeMissingSessionTabs(workspace, liveSessionIds, createGroupId) {
   const missingTabIds = groupsInOrder(workspace.root)
     .flatMap((group) => group.tabs)
-    .filter((tab) => !liveSessionIds.has(tab.sessionId))
+    .filter((tab) => tab.kind !== 'create' && !liveSessionIds.has(tab.sessionId))
     .map((tab) => tab.id);
   const closed = [];
   for (const tabId of missingTabIds) {

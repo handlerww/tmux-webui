@@ -59,9 +59,10 @@ func (c Client) List(ctx context.Context) ([]Session, error) {
 }
 
 // Create starts a detached session and returns the session metadata printed by
-// tmux. The session name is passed as one argument without shell interpolation.
-func (c Client) Create(ctx context.Context, name string) (Session, error) {
-	cmd := exec.CommandContext(ctx, c.Binary, createArguments(name, sessionFormat())...)
+// tmux. The name and working directory are separate arguments without shell
+// interpolation.
+func (c Client) Create(ctx context.Context, name, workingDirectory string) (Session, error) {
+	cmd := exec.CommandContext(ctx, c.Binary, createArguments(name, workingDirectory, sessionFormat())...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if strings.Contains(strings.ToLower(string(output)), "duplicate session") {
@@ -131,8 +132,8 @@ func captureArguments(name string) []string {
 	return []string{"capture-pane", "-p", "-e", "-J", "-S", "-", "-t", name}
 }
 
-func createArguments(name, format string) []string {
-	return []string{"new-session", "-d", "-P", "-F", format, "-s", name}
+func createArguments(name, workingDirectory, format string) []string {
+	return []string{"new-session", "-d", "-P", "-F", format, "-s", name, "-c", workingDirectory}
 }
 
 func renameArguments(target, name string) []string {

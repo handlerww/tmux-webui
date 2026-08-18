@@ -5,14 +5,18 @@ import {
   closeTab,
   createWorkspace,
   editorDropPosition,
+  findCreateTab,
   findGroup,
   findTab,
   groupsInOrder,
   moveTab,
+  openCreateTab,
   openSession,
   placeSessionInGroup,
+  replaceCreateTab,
   sanitizeWorkspace,
   splitTab,
+  workspaceForStorage,
 } from './workspace.js';
 
 function sequence(prefix) {
@@ -36,6 +40,44 @@ test('opening a session focuses its existing tab instead of duplicating it', () 
   assert.equal(reopened.created, false);
   assert.equal(findGroup(workspace, 'main').tabs.length, 2);
   assert.equal(findGroup(workspace, 'main').activeTabId, first.tab.id);
+});
+
+test('new session uses one transient tab and replaces it in place after creation', () => {
+  const workspace = createWorkspace('main');
+  const createTabId = sequence('tab');
+  const first = openCreateTab(workspace, createTabId);
+  const reopened = openCreateTab(workspace, createTabId);
+
+  assert.equal(first.created, true);
+  assert.equal(reopened.created, false);
+  assert.equal(findGroup(workspace, 'main').tabs.length, 1);
+  assert.equal(findCreateTab(workspace).tab.id, first.tab.id);
+
+  const replaced = replaceCreateTab(workspace, '$4');
+  assert.equal(replaced.tab.id, first.tab.id);
+  assert.equal(replaced.tab.sessionId, '$4');
+  assert.equal(findCreateTab(workspace), null);
+});
+
+test('new session tabs are omitted from persisted workspace state', () => {
+  const workspace = createWorkspace('main');
+  const generated = ids();
+  const session = openSession(workspace, '$1', generated.tab);
+  const right = splitTab(workspace, session.tab.id, 'main', 'right', generated, true).group;
+  openCreateTab(workspace, generated.tab);
+  closeTab(workspace, right.tabs[0].id, generated.group);
+
+  const stored = workspaceForStorage(workspace);
+
+  assert.equal(groupsInOrder(stored.root).length, 1);
+  assert.equal(stored.root.id, 'main');
+  assert.deepEqual(stored.root.tabs, [{ id: session.tab.id, sessionId: '$1' }]);
+  assert.equal(stored.activeGroupId, 'main');
+  assert.equal(right.tabs.some((tab) => tab.kind === 'create'), true);
+
+  const empty = createWorkspace('empty');
+  openCreateTab(empty, generated.tab);
+  assert.equal(workspaceForStorage(empty), null);
 });
 
 test('split duplicates only for an explicit split action', () => {
@@ -114,6 +156,15 @@ test('closing the final ended session leaves a valid empty workspace', () => {
   assert.equal(workspace.root.type, 'group');
   assert.equal(workspace.root.tabs.length, 0);
   assert.equal(workspace.activeGroupId, workspace.root.id);
+});
+
+test('session refresh leaves the transient new session tab open', () => {
+  const workspace = createWorkspace('main');
+  const generated = ids();
+  const create = openCreateTab(workspace, generated.tab);
+
+  assert.deepEqual(closeMissingSessionTabs(workspace, new Set(), generated.group), []);
+  assert.equal(findCreateTab(workspace).tab.id, create.tab.id);
 });
 
 test('editor drop target uses edge halves and a single center target', () => {

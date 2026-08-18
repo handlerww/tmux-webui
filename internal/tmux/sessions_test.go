@@ -46,9 +46,9 @@ func TestCaptureArgumentsKeepSessionAsOneArgument(t *testing.T) {
 	}
 }
 
-func TestCreateArgumentsKeepNameAsOneArgument(t *testing.T) {
-	args := createArguments("work; kill-server", "format")
-	if len(args) != 7 || args[4] != "format" || args[6] != "work; kill-server" {
+func TestCreateArgumentsKeepValuesAsIndividualArguments(t *testing.T) {
+	args := createArguments("work; kill-server", "/srv/work tree; touch nope", "format")
+	if len(args) != 9 || args[4] != "format" || args[6] != "work; kill-server" || args[8] != "/srv/work tree; touch nope" {
 		t.Fatalf("create values were not preserved as individual arguments: %#v", args)
 	}
 }
@@ -59,7 +59,7 @@ func TestCreateClassifiesDuplicateSession(t *testing.T) {
 	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (Client{Binary: script}).Create(context.Background(), "work")
+	_, err := (Client{Binary: script}).Create(context.Background(), "work", "/srv/work")
 	if !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("got error %v, want %v", err, ErrSessionExists)
 	}

@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import { SessionEditor } from './editor.js';
+import { addRecentPath, nextNumericSessionName, sessionPathOptions } from './session-create.js';
 import { nextThemeSetting, readThemeSetting, resolveTheme, storeThemeSetting } from './theme.js';
 import {
   activateTab,
@@ -8,16 +9,20 @@ import {
   createWorkspace,
   cycleTab,
   editorDropPosition,
+  findCreateTab,
   findGroup,
   findTab,
   findTabById,
   groupsInOrder,
   moveTab,
+  openCreateTab,
   openSession,
   placeSessionInGroup,
   resizeSplit,
+  replaceCreateTab,
   sanitizeWorkspace,
   splitTab,
+  workspaceForStorage,
 } from './workspace.js';
 import './style.css';
 
@@ -36,7 +41,9 @@ const elements = {
   themeButton: document.querySelector('#theme-button'),
   createSessionButton: document.querySelector('#create-session-button'),
   createSessionForm: document.querySelector('#create-session-form'),
-  createSessionInput: document.querySelector('#create-session-input'),
+  createSessionPath: document.querySelector('#create-session-path'),
+  createSessionName: document.querySelector('#create-session-name'),
+  recentSessionPaths: document.querySelector('#recent-session-paths'),
   createSessionSave: document.querySelector('#create-session-save'),
   createSessionCancel: document.querySelector('#create-session-cancel'),
   refresh: document.querySelector('#refresh-button'),
@@ -49,6 +56,8 @@ const mobileLayoutQuery = window.matchMedia('(max-width: 520px)');
 const sidebarWidthSetting = 'tmux-webui.sidebarWidth';
 const workspaceSetting = 'tmux-webui.workspace.v1';
 const readerAutoFollowSetting = 'tmux-webui.readerAutoFollow';
+const recentPathsSetting = 'tmux-webui.recentPaths.v1';
+const maximumRecentPaths = 12;
 const defaultSidebarWidth = 282;
 const minimumSidebarWidth = 220;
 const compactMinimumSidebarWidth = 190;
@@ -90,6 +99,7 @@ let draggedItem = null;
 let toastTimer = null;
 let sidebarWidth = readSidebarWidth();
 let readerAutoFollow = readReaderAutoFollow();
+let recentPaths = readRecentPaths();
 let themeSetting = readThemeSetting();
 let resolvedTheme = resolveTheme(themeSetting, systemThemeQuery.matches);
 
@@ -127,7 +137,7 @@ function bindPageEvents() {
     event.preventDefault();
     createSession();
   });
-  elements.createSessionInput.addEventListener('keydown', (event) => {
+  elements.createSessionPath.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !createInFlight) {
       event.preventDefault();
       cancelCreateSession(true);
@@ -216,6 +226,7 @@ async function loadSessions(showFeedback = false) {
 }
 
 function renderSessions() {
+  renderCreateSessionOptions();
   elements.sessionList.replaceChildren();
   if (sessions.length === 0) {
     const empty = document.createElement('div');
@@ -278,7 +289,7 @@ function renderSessions() {
 }
 
 function openSessionTab(session) {
-  cancelCreateSession(false);
+  rememberRecentPath(session.path);
   openSession(workspace, session.id, ids.tab);
   setMobileSidebarOpen(false);
   commitWorkspace(true);
@@ -307,7 +318,8 @@ function renderWorkspace(focus = false) {
     editor?.setVisible(true, focus && group.id === workspace.activeGroupId);
   }
   const session = sessionForTab(activeTab());
-  elements.mobileActiveName.textContent = session?.name ?? 'Sessions';
+  elements.mobileActiveName.textContent = activeTab()?.kind === 'create' ? 'New session' : session?.name ?? 'Sessions';
+  elements.createSessionButton.setAttribute('aria-expanded', String(Boolean(findCreateTab(workspace))));
   renderSessions();
 }
 
@@ -315,6 +327,7 @@ function refreshWorkspaceSessions() {
   for (const item of elements.workspaceLayout.querySelectorAll('.editor-tab[data-tab-id]')) {
     const found = findTabById(workspace, item.dataset.tabId);
     if (!found) continue;
+    if (found.tab.kind === 'create') continue;
     const liveSession = sessions.find((candidate) => candidate.id === found.tab.sessionId);
     const session = liveSession ?? editorViews.get(found.tab.id)?.session;
     const label = item.querySelector('.tab-label');
@@ -326,7 +339,7 @@ function refreshWorkspaceSessions() {
     if (close) close.setAttribute('aria-label', `Close ${name}`);
   }
   const session = sessionForTab(activeTab());
-  elements.mobileActiveName.textContent = session?.name ?? 'Sessions';
+  elements.mobileActiveName.textContent = activeTab()?.kind === 'create' ? 'New session' : session?.name ?? 'Sessions';
 }
 
 function renderLayoutNode(node) {
@@ -370,37 +383,43 @@ function renderEditorGroup(group) {
   for (const [index, tab] of group.tabs.entries()) tabs.append(renderTab(group, tab, index));
   const actions = document.createElement('div');
   actions.className = 'group-actions';
+  const creating = group.tabs.find((tab) => tab.id === group.activeTabId)?.kind === 'create';
   actions.append(
-    groupAction('Split right', 'split-right', () => splitActiveTab(group.id, 'right')),
-    groupAction('Split down', 'split-down', () => splitActiveTab(group.id, 'bottom')),
+    groupAction('Split right', 'split-right', () => splitActiveTab(group.id, 'right'), creating),
+    groupAction('Split down', 'split-down', () => splitActiveTab(group.id, 'bottom'), creating),
   );
   tabbar.append(tabs, actions);
 
   const body = document.createElement('div');
   body.className = 'editor-group-body';
-  const editor = editorViews.get(group.activeTabId);
-  if (editor) body.append(editor.panel);
+  if (creating) body.append(renderCreateSessionPanel());
+  else {
+    const editor = editorViews.get(group.activeTabId);
+    if (editor) body.append(editor.panel);
+  }
   body.append(createDropZones(group.id));
   container.append(tabbar, body);
   return container;
 }
 
 function renderTab(group, tab, index) {
+  const creating = tab.kind === 'create';
   const session = sessionForTab(tab);
   const item = document.createElement('div');
   item.className = 'editor-tab';
   item.classList.toggle('active', group.activeTabId === tab.id);
-  item.classList.toggle('ended', !sessions.some((candidate) => candidate.id === tab.sessionId));
+  item.classList.toggle('create', creating);
+  item.classList.toggle('ended', !creating && !sessions.some((candidate) => candidate.id === tab.sessionId));
   item.dataset.tabId = tab.id;
-  item.draggable = true;
+  item.draggable = !creating;
   item.setAttribute('role', 'tab');
   item.setAttribute('aria-selected', String(group.activeTabId === tab.id));
-  item.title = session?.path || session?.name || 'Session ended';
+  item.title = creating ? 'Create tmux session' : session?.path || session?.name || 'Session ended';
   item.addEventListener('click', () => {
     activateTab(workspace, group.id, tab.id);
     commitWorkspace(true);
   });
-  item.addEventListener('dragstart', (event) => startTabDrag(event, tab.id));
+  if (!creating) item.addEventListener('dragstart', (event) => startTabDrag(event, tab.id));
   item.addEventListener('dragover', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -417,16 +436,17 @@ function renderTab(group, tab, index) {
 
   const icon = document.createElement('span');
   icon.className = 'tab-terminal-icon';
-  icon.textContent = '>_';
+  icon.textContent = creating ? '+' : '>_';
   const label = document.createElement('span');
   label.className = 'tab-label';
-  label.textContent = session?.name ?? 'Session ended';
+  label.textContent = creating ? 'New session' : session?.name ?? 'Session ended';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'tab-close';
   close.title = 'Close tab';
   close.setAttribute('aria-label', `Close ${label.textContent}`);
   close.textContent = '×';
+  close.disabled = creating && createInFlight;
   close.addEventListener('pointerdown', (event) => event.stopPropagation());
   close.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -434,6 +454,14 @@ function renderTab(group, tab, index) {
   });
   item.append(icon, label, close);
   return item;
+}
+
+function renderCreateSessionPanel() {
+  const panel = document.createElement('section');
+  panel.className = 'create-session-panel';
+  elements.createSessionForm.hidden = false;
+  panel.append(elements.createSessionForm);
+  return panel;
 }
 
 function createDropZones(groupId) {
@@ -471,12 +499,13 @@ function createDropZones(groupId) {
   return overlay;
 }
 
-function groupAction(label, kind, action) {
+function groupAction(label, kind, action, disabled = false) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `group-action ${kind}`;
   button.title = label;
   button.setAttribute('aria-label', label);
+  button.disabled = disabled;
   button.innerHTML = kind === 'split-right'
     ? '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>'
     : '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/></svg>';
@@ -544,12 +573,19 @@ function dropSessionOnWelcome(event) {
 function splitActiveTab(groupId, position) {
   const group = findGroup(workspace, groupId);
   if (!group?.activeTabId) return;
+  if (group.tabs.find((tab) => tab.id === group.activeTabId)?.kind === 'create') return;
   splitTab(workspace, group.activeTabId, groupId, position, ids, true);
   commitWorkspace(true);
 }
 
 function closeWorkspaceTab(tabId) {
+  const found = findTabById(workspace, tabId);
+  if (found?.tab.kind === 'create' && createInFlight) return;
   closeTab(workspace, tabId, ids.group);
+  if (found?.tab.kind === 'create') {
+    elements.createSessionForm.hidden = true;
+    elements.createSessionButton.setAttribute('aria-expanded', 'false');
+  }
   commitWorkspace(true);
 }
 
@@ -561,7 +597,7 @@ function setActiveGroup(groupId) {
     group.classList.toggle('active', group.dataset.groupId === groupId);
   }
   const session = sessionForTab(activeTab());
-  elements.mobileActiveName.textContent = session?.name ?? 'Sessions';
+  elements.mobileActiveName.textContent = activeTab()?.kind === 'create' ? 'New session' : session?.name ?? 'Sessions';
   renderSessions();
 }
 
@@ -679,7 +715,9 @@ function readStoredWorkspace() {
 
 function persistWorkspace() {
   try {
-    localStorage.setItem(workspaceSetting, JSON.stringify(workspace));
+    const stored = workspaceForStorage(workspace);
+    if (stored) localStorage.setItem(workspaceSetting, JSON.stringify(stored));
+    else localStorage.removeItem(workspaceSetting);
   } catch {
     // The current page keeps working when browser storage is unavailable.
   }
@@ -721,33 +759,45 @@ function applyTheme(setting, persist = true) {
 
 function startCreateSession() {
   if (createInFlight) return;
-  if (!elements.createSessionForm.hidden) {
-    cancelCreateSession(true);
-    return;
+  const existing = findCreateTab(workspace);
+  if (!existing) {
+    const activePath = sessionForTab(activeTab())?.path;
+    elements.createSessionPath.value = activePath || recentSessionPaths()[0] || '';
   }
-  elements.createSessionInput.value = '';
+  renderCreateSessionOptions();
+  openCreateTab(workspace, ids.tab);
   elements.createSessionForm.hidden = false;
   elements.createSessionButton.setAttribute('aria-expanded', 'true');
-  requestAnimationFrame(() => elements.createSessionInput.focus());
+  setMobileSidebarOpen(false);
+  commitWorkspace();
+  requestAnimationFrame(() => {
+    elements.createSessionPath.focus();
+    if (!existing) elements.createSessionPath.select();
+  });
 }
 
 function cancelCreateSession(restoreFocus) {
   if (createInFlight) return;
+  const found = findCreateTab(workspace);
   elements.createSessionForm.hidden = true;
   elements.createSessionButton.setAttribute('aria-expanded', 'false');
-  if (restoreFocus) elements.createSessionButton.focus();
+  if (found) {
+    closeTab(workspace, found.tab.id, ids.group);
+    commitWorkspace(true);
+  }
+  if (restoreFocus) requestAnimationFrame(() => elements.createSessionButton.focus());
 }
 
 async function createSession() {
   if (createInFlight) return;
-  const name = elements.createSessionInput.value.trim();
-  if (!name) {
-    showToast('Enter a session name');
-    elements.createSessionInput.focus();
+  const workingDirectory = elements.createSessionPath.value.trim();
+  if (!workingDirectory) {
+    showToast('Enter a working directory');
+    elements.createSessionPath.focus();
     return;
   }
   createInFlight = true;
-  elements.createSessionInput.disabled = true;
+  elements.createSessionPath.disabled = true;
   elements.createSessionSave.disabled = true;
   elements.createSessionCancel.disabled = true;
   renderSessions();
@@ -755,43 +805,68 @@ async function createSession() {
     const response = await fetch('/api/sessions', {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ path: workingDirectory }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 409) {
-        await loadSessions(false);
-        const existing = sessions.find((session) => session.name === name);
-        if (existing) {
-          openSessionTab(existing);
-          showToast(`Opened existing ${name}`);
-          elements.createSessionForm.hidden = true;
-          elements.createSessionButton.setAttribute('aria-expanded', 'false');
-          return;
-        }
-      }
-      throw new Error(body.error || 'Could not create session');
-    }
-    if (!body.session?.id || !body.session?.name) throw new Error('Invalid session response');
+    if (!response.ok) throw new Error(body.error || 'Could not create session');
+    if (!body.session?.id || !body.session?.name || !body.session?.path) throw new Error('Invalid session response');
     pendingCreatedSession = body.session;
     sessions = [...sessions.filter((item) => item.id !== body.session.id), body.session];
+    if (!replaceCreateTab(workspace, body.session.id)) openSession(workspace, body.session.id, ids.tab);
+    rememberRecentPath(body.session.path);
     elements.sessionSearch.value = '';
     elements.sessionSearchClear.hidden = true;
     elements.createSessionForm.hidden = true;
     elements.createSessionButton.setAttribute('aria-expanded', 'false');
     showToast(`Created ${body.session.name}`);
-    openSessionTab(body.session);
+    commitWorkspace(true);
     loadSessions(false);
   } catch (error) {
     showToast(error.message || 'Could not create session');
-    elements.createSessionInput.focus();
-    elements.createSessionInput.select();
+    elements.createSessionPath.focus();
+    elements.createSessionPath.select();
   } finally {
     createInFlight = false;
-    elements.createSessionInput.disabled = false;
+    elements.createSessionPath.disabled = false;
     elements.createSessionSave.disabled = false;
     elements.createSessionCancel.disabled = false;
     renderSessions();
+  }
+}
+
+function renderCreateSessionOptions() {
+  elements.createSessionName.textContent = nextNumericSessionName(sessions);
+  elements.recentSessionPaths.replaceChildren();
+  for (const path of recentSessionPaths()) {
+    const option = document.createElement('option');
+    option.value = path;
+    elements.recentSessionPaths.append(option);
+  }
+}
+
+function recentSessionPaths() {
+  return sessionPathOptions(recentPaths, sessions, maximumRecentPaths);
+}
+
+function rememberRecentPath(path) {
+  const updated = addRecentPath(recentPaths, path, maximumRecentPaths);
+  if (updated === recentPaths) return;
+  recentPaths = updated;
+  try {
+    localStorage.setItem(recentPathsSetting, JSON.stringify(recentPaths));
+  } catch {
+    // The current page retains recent paths when browser storage is unavailable.
+  }
+  renderCreateSessionOptions();
+}
+
+function readRecentPaths() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(recentPathsSetting));
+    if (!Array.isArray(stored)) return [];
+    return sessionPathOptions(stored, [], maximumRecentPaths);
+  } catch {
+    return [];
   }
 }
 
