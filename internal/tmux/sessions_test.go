@@ -46,6 +46,25 @@ func TestCaptureArgumentsKeepSessionAsOneArgument(t *testing.T) {
 	}
 }
 
+func TestCreateArgumentsKeepNameAsOneArgument(t *testing.T) {
+	args := createArguments("work; kill-server", "format")
+	if len(args) != 7 || args[4] != "format" || args[6] != "work; kill-server" {
+		t.Fatalf("create values were not preserved as individual arguments: %#v", args)
+	}
+}
+
+func TestCreateClassifiesDuplicateSession(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-tmux")
+	contents := "#!/bin/sh\nprintf '%s\\n' 'duplicate session: work' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (Client{Binary: script}).Create(context.Background(), "work")
+	if !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("got error %v, want %v", err, ErrSessionExists)
+	}
+}
+
 func TestRenameArgumentsKeepValuesAsSingleArguments(t *testing.T) {
 	args := renameArguments("$4", "work; kill-server")
 	if len(args) != 4 || args[2] != "$4" || args[3] != "work; kill-server" {

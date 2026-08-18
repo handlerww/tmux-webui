@@ -38,3 +38,26 @@ test('keeps output text as data instead of HTML', () => {
   assert.equal(line.segments[0].text, '<script>alert(1)</script>');
   assert.equal(line.segments[0].style.fontWeight, '700');
 });
+
+test('parses OSC 8 hyperlinks terminated by ST or BEL', () => {
+  const docs = 'https://docs.datadoghq.com/account_management/billing/usage_metrics/';
+  const [line] = parseAnsiLines([
+    `\u001b]8;;${docs}\u001b\\Datadog\u001b]8;;\u001b\\`,
+    ' and ',
+    `\u001b]8;id=usage;${docs}\u0007Estimated Usage\u001b]8;;\u0007`,
+  ].join(''));
+
+  assert.deepEqual(line.segments.map(({ text, href = '' }) => ({ text, href })), [
+    { text: 'Datadog', href: docs },
+    { text: ' and ', href: '' },
+    { text: 'Estimated Usage', href: docs },
+  ]);
+});
+
+test('strips unsupported OSC controls and rejects unsafe hyperlink protocols', () => {
+  const [line] = parseAnsiLines('\u001b]0;window title\u0007before \u001b]8;;javascript:alert(1)\u001b\\unsafe\u001b]8;;\u001b\\ after');
+
+  assert.deepEqual(line.segments.map(({ text, href = '' }) => ({ text, href })), [
+    { text: 'before unsafe after', href: '' },
+  ]);
+});

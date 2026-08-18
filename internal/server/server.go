@@ -41,6 +41,10 @@ type renameSessionRequest struct {
 	Name string `json:"name"`
 }
 
+type createSessionRequest struct {
+	Name string `json:"name"`
+}
+
 func New(tmuxBinary string, logger *slog.Logger) http.Handler {
 	static, err := fs.Sub(webassets.Files, "dist")
 	if err != nil {
@@ -54,6 +58,7 @@ func New(tmuxBinary string, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", server.health)
 	mux.HandleFunc("GET /api/sessions", server.sessions)
+	mux.HandleFunc("POST /api/sessions", server.createSession)
 	mux.HandleFunc("PATCH /api/sessions/rename", server.renameSession)
 	mux.HandleFunc("GET /api/capture", server.capture)
 	mux.HandleFunc("GET /ws", server.connect)
@@ -109,6 +114,45 @@ func (s *Server) sessions(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) createSession(writer http.ResponseWriter, request *http.Request) {
+	if !sameOrigin(request) {
+		writeError(writer, http.StatusForbidden, "Request origin is not allowed")
+		return
+	}
+
+	request.Body = http.MaxBytesReader(writer, request.Body, 4<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input createSessionRequest
+	if err := decoder.Decode(&input); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid create request")
+		return
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		writeError(writer, http.StatusBadRequest, "Invalid create request")
+		return
+	}
+	if message := validateSessionName(input.Name); message != "" {
+		writeError(writer, http.StatusBadRequest, message)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
+	defer cancel()
+	session, err := s.tmux.Create(ctx, input.Name)
+	if err != nil {
+		if errors.Is(err, tmux.ErrSessionExists) {
+			writeError(writer, http.StatusConflict, "A tmux session with that name already exists")
+			return
+		}
+		s.logger.Error("failed to create tmux session", "name", input.Name, "error", err)
+		writeError(writer, http.StatusServiceUnavailable, "Unable to create the tmux session")
+		return
+	}
+
+	writeJSON(writer, http.StatusCreated, map[string]any{"session": session})
 }
 
 func (s *Server) renameSession(writer http.ResponseWriter, request *http.Request) {

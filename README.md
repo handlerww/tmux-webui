@@ -9,8 +9,16 @@ Reader is the default view. tmux interprets the terminal state, and the browser 
 ## Features
 
 - Automatically lists local tmux sessions with their window count, attached clients, path, and recent activity.
+- Opens each tmux session once as a tab; choosing an already-open session focuses its existing tab.
+- Creates detached tmux sessions from the sidebar and opens them immediately in the active editor group.
+- Closes tabs without terminating their tmux sessions, reorders tabs by dragging, and moves tabs between editor groups.
+- Drags sessions directly from the sidebar into an editor group or onto an edge to create a split, without duplicating an already-open session.
+- Splits any editor group right or down, supports nested layouts, and resizes split dividers by pointer or keyboard.
+- Creates a split by dragging a tab to an editor edge; dropping in the center moves it into that editor group.
+- Automatically closes open tabs after a successful refresh confirms that their tmux session ended, and discards ended sessions when restoring a saved layout.
 - Renames the active tmux session directly from the workspace toolbar.
 - Shows the complete pane history in Reader with ANSI text and background colors, native browser scrolling, selection, and copy.
+- Renders safe HTTP and HTTPS OSC 8 terminal hyperlinks as clickable Reader links.
 - Opens Reader at the latest output without following later updates unless the persistent Auto-follow option is enabled.
 - Provides a separate Reader input box with Esc, Ctrl C, and Tab controls.
 - Switches to Terminal at any time for direct keyboard and terminal mouse input.
@@ -18,6 +26,12 @@ Reader is the default view. tmux interprets the terminal state, and the browser 
 - Supports text selection, `Ctrl/Cmd+C` to copy, and `Ctrl/Cmd+V` or the toolbar button to paste.
 - Resizes the PTY with the browser so tmux and its applications receive real resize events.
 - Detaches only the browser's tmux client when the page disconnects; the session keeps running.
+
+The tab shortcuts follow the familiar editor conventions: `Ctrl/Cmd+W` closes
+the active tab, `Ctrl/Cmd+Tab` cycles tabs in the active group, and
+`Ctrl/Cmd+\` splits the active tab to the right. The split buttons in each tab
+bar also support right and down splits. An explicit split may show the same
+session in two groups; normal sidebar opening still de-duplicates globally.
 
 > When tmux or an application captures the mouse, hold `Shift` while dragging to force text selection. This matches tmux mouse-mode behavior in a local terminal.
 
@@ -38,7 +52,7 @@ go build -trimpath -o bin/tmux-webui ./cmd/tmux-webui
 ./bin/tmux-webui
 ```
 
-If no session exists yet:
+If no session exists yet, use the `+` button next to Sessions or run:
 
 ```bash
 tmux new-session -s work
@@ -150,12 +164,18 @@ npm --prefix frontend run build
 ## Implementation
 
 ```text
-Reader  ── capture API ── tmux capture-pane ── selected session
-Input   ── WebSocket ──── Linux PTY ── tmux client ─┘
-Terminal + xterm.js ──────┘
+Visible tab Reader  ── capture API ── tmux capture-pane ── session
+Visible tab Input   ── WebSocket ──── Linux PTY ── tmux client ─┘
+Visible tab Terminal + xterm.js ──────┘
 ```
 
-The backend accepts only sessions that exactly match the output of `tmux list-sessions`, and rename operations target the stable tmux session ID. Browser input and session names are never passed through a local shell. On connection, it enables `mouse on` for the selected tmux session so panes and full-screen applications can receive mouse events.
+The backend accepts only sessions that exactly match the output of `tmux list-sessions`, and rename operations target the stable tmux session ID. New sessions are created detached with validated names. Browser input and session names are never passed through a local shell. On connection, it enables `mouse on` for the selected tmux session so panes and full-screen applications can receive mouse events.
+
+Each visible editor group owns its own PTY/WebSocket and fast Reader refresh
+loop. Inactive open Reader tabs disconnect their PTY/WebSocket but refresh at a
+lower frequency, keeping a recent browser-side snapshot ready for tab switches
+without creating an extra tmux client per tab. Closing a tab affects only the
+browser workspace and does not send a tmux kill command.
 
 The xterm.js frontend dependencies use the MIT License. Their copyright and license details are available in the corresponding npm packages.
 

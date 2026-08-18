@@ -2,36 +2,43 @@
 <html lang="en" data-theme="system">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f3f1eb" />
-    <script>
-      (() => {
-        try {
-          const saved = localStorage.getItem('tmux-webui.theme');
-          const setting = ['system', 'light', 'dark'].includes(saved) ? saved : 'system';
-          const resolved = setting === 'system'
-            ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-            : setting;
-          document.documentElement.dataset.theme = setting;
-          document.documentElement.dataset.colorScheme = resolved;
-          document.querySelector('meta[name="theme-color"]').content = resolved === 'dark' ? '#151a18' : '#f3f1eb';
-        } catch {
-          document.documentElement.dataset.colorScheme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        }
-      })();
-    </script>
+    <script type="module" src="/src/theme-bootstrap.js"></script>
     <title>tmux workspace</title>
   </head>
   <body>
     <div id="app">
-      <aside class="sidebar">
+      <header class="mobile-header">
+        <button id="mobile-session-toggle" class="mobile-menu-button" type="button" aria-label="Open sessions" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="mobile-brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="mobile-header-copy">
+          <span class="mobile-header-label">tmux workspace</span>
+          <strong id="mobile-active-name">Sessions</strong>
+        </div>
+      </header>
+
+      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close sessions" tabindex="-1" hidden></button>
+      <aside id="sidebar" class="sidebar">
         <div class="brand-row">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
           <div>
             <div class="brand">tmux workspace</div>
             <div class="brand-subtitle">Local sessions</div>
           </div>
+          <button id="theme-button" class="theme-button sidebar-theme-button" type="button" data-theme-setting="system" title="Theme: System" aria-label="Theme: System">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <g class="theme-icon" data-theme-icon="system"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></g>
+              <g class="theme-icon" data-theme-icon="light"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g>
+              <g class="theme-icon" data-theme-icon="dark"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"/></g>
+            </svg>
+          </button>
+          <button id="mobile-sidebar-close" class="mobile-sidebar-close" type="button" aria-label="Close sessions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
         </div>
 
         <label class="session-search" for="session-search-input">
@@ -42,15 +49,35 @@
 
         <div class="session-heading">
           <span>Sessions</span>
-          <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh sessions">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.7 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.3 15"/></svg>
-          </button>
+          <div class="session-heading-actions">
+            <button id="create-session-button" class="icon-button" type="button" title="New session" aria-label="Create tmux session" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button id="refresh-button" class="icon-button" type="button" title="Refresh" aria-label="Refresh sessions">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.7 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.3 15"/></svg>
+            </button>
+          </div>
         </div>
+        <form id="create-session-form" class="create-session-form" hidden>
+          <input id="create-session-input" type="text" maxlength="100" placeholder="Session name" autocomplete="off" spellcheck="false" aria-label="New session name" />
+          <div class="create-session-actions">
+            <button id="create-session-cancel" type="button">Cancel</button>
+            <button id="create-session-save" type="submit">Create</button>
+          </div>
+        </form>
         <div id="session-list" class="session-list" aria-live="polite"></div>
         <div class="sidebar-footer">
           <span class="local-dot"></span>
           Local only
         </div>
+        <div
+          id="sidebar-resizer"
+          class="sidebar-resizer"
+          role="separator"
+          aria-label="Resize sessions sidebar"
+          aria-orientation="vertical"
+          tabindex="0"
+        ></div>
       </aside>
 
       <main class="workspace">
@@ -60,90 +87,16 @@
             <div class="window window-front"><span></span><span></span><span></span></div>
           </div>
           <p class="eyebrow">RUNNING SESSIONS</p>
-          <h1>Choose a session</h1>
-          <p class="welcome-copy">Pick up where you left off.</p>
+          <h1>Open a session</h1>
+          <p class="welcome-copy">Sessions open once as tabs. Split or drag them when you need another view.</p>
           <div class="gesture-grid">
-            <div><kbd>Drag</kbd><span>Select</span></div>
-            <div><kbd>⌘ / Ctrl C</kbd><span>Copy</span></div>
-            <div><kbd>⌘ / Ctrl V</kbd><span>Paste</span></div>
-            <div><kbd>Shift + drag</kbd><span>Force select</span></div>
+            <div><kbd>Ctrl / ⌘ W</kbd><span>Close tab</span></div>
+            <div><kbd>Ctrl / ⌘ Tab</kbd><span>Next tab</span></div>
+            <div><kbd>Ctrl / ⌘ \\</kbd><span>Split right</span></div>
+            <div><kbd>Drag tab</kbd><span>Move or split</span></div>
           </div>
         </section>
-
-        <section id="terminal-view" class="terminal-view" hidden>
-          <header class="toolbar">
-            <div class="session-identity">
-              <div class="session-icon" aria-hidden="true">›_</div>
-              <div class="session-details">
-                <div id="session-name-display" class="session-name-display">
-                  <h1 id="active-name">Session</h1>
-                  <button id="rename-button" class="rename-button" type="button" title="Rename session" aria-label="Rename session">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.5-10.5a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.2 3 3"/></svg>
-                  </button>
-                </div>
-                <form id="rename-form" class="rename-form" hidden>
-                  <input id="rename-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" aria-label="New session name" />
-                  <button id="rename-save" type="submit">Save</button>
-                  <button id="rename-cancel" type="button">Cancel</button>
-                </form>
-                <div id="active-path" class="active-path"></div>
-                <div class="connection-line"><span id="connection-dot" class="connection-dot"></span><span id="connection-text">Connecting</span></div>
-              </div>
-            </div>
-            <div class="toolbar-actions">
-              <div class="view-switch" role="group" aria-label="View">
-                <button id="reader-mode-button" type="button" aria-pressed="true">Reader</button>
-                <button id="terminal-mode-button" type="button" aria-pressed="false">Terminal</button>
-              </div>
-              <button id="reader-follow-button" class="action-button reader-action reader-follow-button" type="button" aria-pressed="false" title="Automatically follow new output">
-                <span class="reader-follow-dot" aria-hidden="true"></span>
-                Auto-follow
-              </button>
-              <button id="copy-button" class="action-button terminal-action" type="button" disabled hidden>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
-                Copy
-              </button>
-              <button id="paste-button" class="action-button terminal-action" type="button" hidden>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h6M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2H9V4Z"/><path d="M16 5h2a2 2 0 0 1 2 2v13H4V7a2 2 0 0 1 2-2h2"/></svg>
-                Paste
-              </button>
-              <button id="reconnect-button" class="action-button quiet" type="button">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.7 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.3 15"/></svg>
-                Reconnect
-              </button>
-              <button id="theme-button" class="theme-button" type="button" data-theme-setting="system" title="Theme: System" aria-label="Theme: System">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <g class="theme-icon" data-theme-icon="system"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></g>
-                  <g class="theme-icon" data-theme-icon="light"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g>
-                  <g class="theme-icon" data-theme-icon="dark"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"/></g>
-                </svg>
-              </button>
-            </div>
-          </header>
-          <div id="reader-view" class="reader-view" tabindex="0" aria-label="Session output">
-            <div id="reader-content" class="reader-content"></div>
-            <div id="reader-status" class="reader-status loading">Loading output</div>
-          </div>
-          <div id="terminal-shell" class="terminal-shell" hidden>
-            <div id="terminal" aria-label="tmux session"></div>
-          </div>
-          <form id="reader-composer" class="reader-composer">
-            <div class="reader-shortcuts" aria-label="Keys">
-              <button type="button" data-key="escape">Esc</button>
-              <button type="button" data-key="interrupt">Ctrl C</button>
-              <button type="button" data-key="tab">Tab</button>
-            </div>
-            <div class="composer-row">
-              <textarea id="reader-input" class="reader-input" rows="1" placeholder="Type a message" aria-label="Session input" spellcheck="true"></textarea>
-              <button class="send-button" type="submit" aria-label="Send">↑</button>
-            </div>
-          </form>
-          <footer id="terminal-hint" class="hint-bar" hidden>
-            <span>Type to interact</span>
-            <span class="hint-separator"></span>
-            <span><kbd>Shift</kbd> + drag to select</span>
-          </footer>
-        </section>
+        <div id="workspace-layout" class="workspace-layout" hidden></div>
       </main>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

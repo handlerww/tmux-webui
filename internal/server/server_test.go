@@ -98,6 +98,45 @@ exit 1
 	}
 }
 
+func TestCreateSession(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	logPath := filepath.Join(temporaryDirectory, "arguments")
+	tmuxBinary := filepath.Join(temporaryDirectory, "fake-tmux")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "new-session" ]; then
+  printf '%%s\n' "$2|$3|$4|$6|$7" > %q
+  printf '%%s\n' '$9<<<tmux-webui-field>>>new work<<<tmux-webui-field>>>/tmp<<<tmux-webui-field>>>1<<<tmux-webui-field>>>0<<<tmux-webui-field>>>1723000000<<<tmux-webui-field>>>1723000000'
+  exit 0
+fi
+exit 1
+`, logPath)
+	if err := os.WriteFile(tmuxBinary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := New(tmuxBinary, logger)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/sessions", bytes.NewBufferString(`{"name":"new work"}`))
+	request.Header.Set("Origin", "http://127.0.0.1")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("got status %d with body %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"id":"$9"`) || !strings.Contains(response.Body.String(), `"name":"new work"`) {
+		t.Fatalf("unexpected response body %s", response.Body.String())
+	}
+	arguments, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(arguments)), "-d|-P|-F|-s|new work"; got != want {
+		t.Fatalf("create arguments = %q, want %q", got, want)
+	}
+}
+
 func TestRenameSessionRejectsCrossOriginRequest(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New("unused", logger)
